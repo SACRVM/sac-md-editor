@@ -1,0 +1,10 @@
+# Firepit + Claude Code — shared config versioned, runtime/personal local
+.firepit/inbox/
+.firepit/runs/
+.firepit/knowledge.db*
+!.firepit/config.json
+.claude/settings.local.json
+.claude/*.lock
+.claude/agent-memory/
+.firepit/artifacts.json
+.firepit/knowledge-pinned.md

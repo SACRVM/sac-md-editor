@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>sac-md-editor — demo</title>
+    <link rel="stylesheet" href="kit/css/ui.css">
+
+    <!-- The component needs marked + DOMPurify as globals; the vendored kit
+         ships both. Classic ordered defer, no build step. -->
+    <script defer src="kit/js/vendor/marked.min.js"></script>
+    <script defer src="kit/js/vendor/purify.min.js"></script>
+    <script defer src="js/sac-md-editor.js"></script>
+
+    <style>
+        .demo-shell { max-width: 900px; margin: 0 auto; padding: 3rem 2rem; }
+        .demo-shell header { margin-bottom: 2rem; }
+        .demo-shell h1 { font-size: 2rem; font-weight: 800; }
+        .demo-shell p.lead { color: var(--text-muted); margin-top: .5rem; }
+        sac-md-editor { display: block; min-height: 420px; border: 1px solid var(--border);
+                        border-radius: var(--radius-m, 8px); }
+        .demo-actions { display: flex; gap: .5rem; margin: 1rem 0 2rem; }
+    </style>
+</head>
+<body>
+    <div class="demo-shell">
+        <header>
+            <h1>&lt;sac-md-editor&gt;</h1>
+            <p class="lead">Live-preview markdown editing — the caret line is raw
+               source, every other line renders. No mode switch, no build step.</p>
+        </header>
+
+        <sac-md-editor id="editor" placeholder="Write some markdown…"></sac-md-editor>
+
+        <div class="demo-actions">
+            <button class="btn" id="dump">Log value to console</button>
+            <button class="btn" id="ro">Toggle readonly</button>
+        </div>
+    </div>
+
+    <script defer>
+        window.addEventListener("DOMContentLoaded", () => {
+            const ed = document.getElementById("editor");
+            ed.value = [
+                "# Hello",
+                "",
+                "The line your **caret** sits on shows as raw markdown; every other",
+                "line renders. Try *italics*, `inline code`, and [links](https://example.com).",
+                "",
+                "- Lists continue on Enter",
+                "- Enter on an empty item exits the list",
+                "",
+                "```",
+                "code fences are left alone — :::secret in here is just text",
+                "```",
+                "",
+                ":::secret",
+                "Blurred until you click the eye on the boundary line.",
+                "Session-only, purely visual — see the README's security note.",
+                ":::end",
+                "",
+                "> The canonical document is the concatenated textContent of the",
+                "> line divs. Round-tripping is trivial because nothing is ever",
+                "> synthesized or deleted.",
+            ].join("\n");
+
+            document.getElementById("dump").addEventListener("click",
+                () => console.log(ed.value));
+            document.getElementById("ro").addEventListener("click",
+                () => ed.toggleAttribute("readonly"));
+        });
+    </script>
+</body>
+</html>
