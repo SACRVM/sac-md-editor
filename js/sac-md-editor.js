@@ -3,8 +3,10 @@
  *
  * Zero dependencies beyond the kit's vendored marked + DOMPurify, zero build
  * step, one classic deferred script. Styling lives in the shadow root but
- * inherits the kit's seed tokens (--accent, --text, --border, ...), so the
- * editor rethemes with the host page like every kit component.
+ * inherits the kit's seed tokens (--fg, --field, --accent, --text, --border,
+ * --on-accent, ...), each with a dark fallback, so the editor rethemes with
+ * the host page in light and dark like every kit component and still renders
+ * standalone.
  *
  * Obsidian-style "live preview" markdown editor. There is no mode switch:
  *   - The line your caret sits on shows as raw markdown source (flat text).
@@ -1569,8 +1571,8 @@ const TEMPLATE = `
         /* Editor reads as a bordered writing surface with a toolbar strip
            on top — a bare transparent area gives no "you can type here"
            affordance at all. Focus pulls the border toward the accent. */
-        background: rgba(0, 0, 0, 0.18);
-        border: 1px solid var(--border, rgba(255,255,255,0.08));
+        background: var(--field, rgba(0, 0, 0, 0.18));
+        border: 1px solid var(--border, color-mix(in srgb, var(--fg, #fff) 8%, transparent));
         border-radius: 12px;
         transition: border-color 0.15s, box-shadow 0.15s;
     }
@@ -1589,8 +1591,8 @@ const TEMPLATE = `
         gap: 2px;
         flex-wrap: wrap;
         padding: 8px 12px;
-        background: rgba(255, 255, 255, 0.02);
-        border-bottom: 1px solid var(--border, rgba(255,255,255,0.08));
+        background: color-mix(in srgb, var(--fg, #fff) 2%, transparent);
+        border-bottom: 1px solid var(--border, color-mix(in srgb, var(--fg, #fff) 8%, transparent));
         border-radius: 12px 12px 0 0;
     }
     .toolbar button {
@@ -1612,7 +1614,7 @@ const TEMPLATE = `
         line-height: 1;
     }
     .toolbar button:hover {
-        background: rgba(255,255,255,0.06);
+        background: color-mix(in srgb, var(--fg, #fff) 6%, transparent);
         color: var(--text, #fff);
     }
     .toolbar button b, .toolbar button i { font-size: 13px; }
@@ -1620,7 +1622,7 @@ const TEMPLATE = `
         width: 1px;
         height: 20px;
         margin: 0 4px;
-        background: var(--border, rgba(255,255,255,0.08));
+        background: var(--border, color-mix(in srgb, var(--fg, #fff) 8%, transparent));
         align-self: center;
     }
 
@@ -1668,7 +1670,7 @@ const TEMPLATE = `
        jagged text-shape selection. */
     .editor:focus-within .line.active,
     .editor:focus-within .line.sel {
-        background: rgba(255, 255, 255, 0.045);
+        background: color-mix(in srgb, var(--fg, #fff) 4.5%, transparent);
     }
     /* Within that band, the actual text selection uses the accent color
        at low opacity - keeps the "exactly-these-chars-are-selected"
@@ -1719,10 +1721,10 @@ const TEMPLATE = `
        with the gutter instead of hanging inside the padding. The angle-
        bracket marker is hidden when inactive; the left bar is the cue. */
     .line.quote {
-        background: rgba(255, 255, 255, 0.025);
+        background: color-mix(in srgb, var(--fg, #fff) 2.5%, transparent);
         padding-left: 18px;
         margin: 0 -10px;
-        border-left: 3px solid rgba(255, 255, 255, 0.28);
+        border-left: 3px solid color-mix(in srgb, var(--fg, #fff) 28%, transparent);
         border-radius: 0;
         color: var(--text-muted, #bbb);
         font-style: italic;
@@ -1763,7 +1765,7 @@ const TEMPLATE = `
        1.6em min-height doesn't win the cascade and leave the raw dashes
        visible. overflow:hidden clips the hidden text. */
     .line.hr {
-        border-bottom: 1px solid var(--border, rgba(255,255,255,0.15));
+        border-bottom: 1px solid var(--border, color-mix(in srgb, var(--fg, #fff) 15%, transparent));
         margin: 1em 0;
         padding: 0;
         min-height: 1px;
@@ -1804,7 +1806,7 @@ const TEMPLATE = `
 
     .line.fence-body,
     .line.fence:not(.active) {
-        background: rgba(255, 255, 255, 0.05);
+        background: color-mix(in srgb, var(--fg, #fff) 5%, transparent);
         margin: 0 -10px;
         padding: 2px 14px;
         border-radius: 0;
@@ -1817,7 +1819,7 @@ const TEMPLATE = `
        0.045 tint would paint right over the code card. */
     .editor:focus-within .line.fence-body.active,
     .line.fence-body.active {
-        background: rgba(255, 255, 255, 0.07);
+        background: color-mix(in srgb, var(--fg, #fff) 7%, transparent);
         margin: 0 -10px;
         padding: 2px 14px;
         border-radius: 0;
@@ -1842,9 +1844,9 @@ const TEMPLATE = `
         border-top-right-radius: 6px;
         min-height: 10px;
         padding-top: 6px;
-        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08),
-                    inset 1px 0 0 rgba(255, 255, 255, 0.08),
-                    inset -1px 0 0 rgba(255, 255, 255, 0.08);
+        box-shadow: inset 0 1px 0 color-mix(in srgb, var(--fg, #fff) 8%, transparent),
+                    inset 1px 0 0 color-mix(in srgb, var(--fg, #fff) 8%, transparent),
+                    inset -1px 0 0 color-mix(in srgb, var(--fg, #fff) 8%, transparent);
     }
     /* Closing fence: rounded bottom + bottom border. */
     .line.fence-body + .line.fence:not(.active) {
@@ -1852,27 +1854,27 @@ const TEMPLATE = `
         border-bottom-right-radius: 6px;
         min-height: 10px;
         padding-bottom: 6px;
-        box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.08),
-                    inset 1px 0 0 rgba(255, 255, 255, 0.08),
-                    inset -1px 0 0 rgba(255, 255, 255, 0.08);
+        box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--fg, #fff) 8%, transparent),
+                    inset 1px 0 0 color-mix(in srgb, var(--fg, #fff) 8%, transparent),
+                    inset -1px 0 0 color-mix(in srgb, var(--fg, #fff) 8%, transparent);
     }
     /* Body lines get left/right borders so the card has continuous sides. */
     .line.fence-body {
-        box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.08),
-                    inset -1px 0 0 rgba(255, 255, 255, 0.08);
+        box-shadow: inset 1px 0 0 color-mix(in srgb, var(--fg, #fff) 8%, transparent),
+                    inset -1px 0 0 color-mix(in srgb, var(--fg, #fff) 8%, transparent);
     }
 
     /* Active fence marker (user is editing the fence boundary line):
        dim the raw markers so they read as syntax, keep the card bg. */
     .editor:focus-within .line.fence.active,
     .line.fence.active {
-        background: rgba(255, 255, 255, 0.07);
+        background: color-mix(in srgb, var(--fg, #fff) 7%, transparent);
         margin: 0 -10px;
         padding: 2px 14px;
         border-radius: 0;
         color: var(--text-muted, #888);
-        box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.08),
-                    inset -1px 0 0 rgba(255, 255, 255, 0.08);
+        box-shadow: inset 1px 0 0 color-mix(in srgb, var(--fg, #fff) 8%, transparent),
+                    inset -1px 0 0 color-mix(in srgb, var(--fg, #fff) 8%, transparent);
     }
 
     /* Selection band inside a code block: keep the card bg, don't let
@@ -1880,7 +1882,7 @@ const TEMPLATE = `
        already have their own bg set by the dedicated .active rules. */
     .editor:focus-within .line.sel.fence-body,
     .editor:focus-within .line.sel.fence {
-        background: rgba(255, 255, 255, 0.09);
+        background: color-mix(in srgb, var(--fg, #fff) 9%, transparent);
     }
 
     /* Secret block — a warm-tinted card (same visual vocabulary as code
@@ -2014,7 +2016,7 @@ const TEMPLATE = `
         width: 14px;
         height: 14px;
         vertical-align: -3px;
-        border: 1.5px solid var(--border, rgba(255,255,255,0.3));
+        border: 1.5px solid var(--border, color-mix(in srgb, var(--fg, #fff) 30%, transparent));
         border-radius: 3px;
         position: relative;
         color: transparent;
@@ -2041,7 +2043,7 @@ const TEMPLATE = `
         left: 50%;
         top: 50%;
         transform: translate(-50%, -54%);
-        color: #fff;
+        color: var(--on-accent, #fff);
         font-size: 11px;
         line-height: 1;
         font-weight: 700;
@@ -2057,7 +2059,7 @@ const TEMPLATE = `
     .line em     { font-style: italic; }
     .line del    { text-decoration: line-through; opacity: 0.65; }
     .line code {
-        background: rgba(255, 255, 255, 0.08);
+        background: color-mix(in srgb, var(--fg, #fff) 8%, transparent);
         padding: 1px 5px;
         border-radius: 3px;
         font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;

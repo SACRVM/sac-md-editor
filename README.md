@@ -35,8 +35,9 @@ npx serve .        # http://localhost:3000 — the root page is the demo
 | Keyboard | Ctrl/Cmd+B/I/K · Enter continues lists · Tab soft-tabs · Backspace merges lines |
 
 Styling is Shadow-DOM-scoped but driven by the kit's seed tokens
-(`--accent`, `--text`, `--border`, …), so the editor rethemes with the page.
-It works without the kit too — define those custom properties yourself.
+(`--fg`, `--field`, `--accent`, `--text`, `--border`, `--on-accent`, …), so
+the editor rethemes with the page in light and dark. It works without the kit
+too — every token read has a dark fallback, or define the properties yourself.
 
 ## The one invariant
 

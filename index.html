@@ -11,6 +11,8 @@
     <script defer src="kit/js/vendor/marked.min.js"></script>
     <script defer src="kit/js/vendor/purify.min.js"></script>
     <script defer src="js/sac-md-editor.js"></script>
+    <!-- Kit theme toggle so the demo can be checked in light and dark. -->
+    <script defer src="kit/js/components/sac-theme-toggle.js"></script>
 
     <style>
         .demo-shell { max-width: 900px; margin: 0 auto; padding: 3rem 2rem; }
@@ -35,6 +37,7 @@
         <div class="demo-actions">
             <button class="btn" id="dump">Log value to console</button>
             <button class="btn" id="ro">Toggle readonly</button>
+            <sac-theme-toggle style="margin-left: auto;"></sac-theme-toggle>
         </div>
     </div>
 
