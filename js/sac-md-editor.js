@@ -33,6 +33,15 @@
  * Methods:
  *   focus() - focus the editor surface.
  *
+ * Language:
+ *   The editor's own strings (toolbar labels and tooltips, the reveal
+ *   toggle, the link prompt) follow the page language the kit way: sac.t()
+ *   with the English text as the inline fallback, relabelled in place on
+ *   sac.lang.onChange. A German table registers itself through
+ *   sac.i18n.add (keys "md-editor.*"); a host adds other languages with the
+ *   same keys. Without the kit's globals.js the editor stays English. The
+ *   `placeholder` attribute is the host's string - translate it there.
+ *
  * Keyboard:
  *   Ctrl/Cmd+B, Ctrl/Cmd+I, Ctrl/Cmd+K    bold / italic / link
  *   Enter                                  split; continues `- `/`* `/`1. ` lists
@@ -80,6 +89,62 @@ const REVEAL_EYE_SVG =
     `<line class="sac-eye-slash" x1="3" y1="3" x2="21" y2="21"/>` +
     `</svg>`;
 
+// Kit i18n: sac.t when globals.js is loaded, the English fallback when the
+// editor runs without the kit.
+const mdT = (key, fallback) =>
+    (window.sac && typeof window.sac.t === "function") ? window.sac.t("md-editor." + key, fallback) : fallback;
+
+// German strings. Registered lazily (first connect), not at parse time: a
+// page may load this file before the kit's globals.js. ASCII source, so
+// umlauts are escaped.
+let mdStringsAdded = false;
+function mdAddStrings() {
+    if (mdStringsAdded) return;
+    if (!(window.sac && window.sac.i18n && typeof window.sac.i18n.add === "function")) return;
+    mdStringsAdded = true;
+    window.sac.i18n.add("de", {
+        "md-editor.bold":        "Fett (Strg+B)",
+        "md-editor.italic":      "Kursiv (Strg+I)",
+        "md-editor.strike":      "Durchgestrichen",
+        "md-editor.h1":          "\u00dcberschrift 1",
+        "md-editor.h2":          "\u00dcberschrift 2",
+        "md-editor.h3":          "\u00dcberschrift 3",
+        "md-editor.link":        "Link (Strg+K)",
+        "md-editor.linkLabel":   "Link",
+        "md-editor.code":        "Code im Text",
+        "md-editor.codeLabel":   "Code",
+        "md-editor.ul":          "Aufz\u00e4hlung",
+        "md-editor.ulLabel":     "Liste",
+        "md-editor.ol":          "Nummerierte Liste",
+        "md-editor.olLabel":     "1. Liste",
+        "md-editor.quote":       "Zitat",
+        "md-editor.quoteLabel":  "Zitat",
+        "md-editor.hr":          "Trennlinie",
+        "md-editor.hrLabel":     "Linie",
+        "md-editor.linkPrompt":  "Link-Adresse",
+        "md-editor.linkText":    "Linktext",
+        "md-editor.secret":      "Geheim",
+        "md-editor.reveal":      "Geheimen Inhalt zeigen / verbergen",
+    });
+}
+
+// Toolbar strings per data-fmt: [tooltip key, English tooltip, label key,
+// English label]. A null label key keeps the template's glyph (B, I, S, H1..).
+const MD_TOOLBAR_TEXT = {
+    bold:   ["bold",   "Bold (Ctrl+B)",   null, null],
+    italic: ["italic", "Italic (Ctrl+I)", null, null],
+    strike: ["strike", "Strikethrough",   null, null],
+    h1:     ["h1",     "Heading 1",       null, null],
+    h2:     ["h2",     "Heading 2",       null, null],
+    h3:     ["h3",     "Heading 3",       null, null],
+    link:   ["link",   "Link (Ctrl+K)",   "linkLabel",  "Link"],
+    code:   ["code",   "Inline code",     "codeLabel",  "Code"],
+    ul:     ["ul",     "Bullet list",     "ulLabel",    "List"],
+    ol:     ["ol",     "Numbered list",   "olLabel",    "1. List"],
+    quote:  ["quote",  "Blockquote",      "quoteLabel", "Quote"],
+    hr:     ["hr",     "Horizontal rule", "hrLabel",    "HR"],
+};
+
 class SacMdEditor extends HTMLElement {
     static observedAttributes = ["placeholder", "readonly"];
 
@@ -104,7 +169,12 @@ class SacMdEditor extends HTMLElement {
     }
 
     connectedCallback() {
+        mdAddStrings();
         if (!this.shadowRoot.firstChild) this._render();
+        this._relabel();
+        if (window.sac && window.sac.lang && !this._offLang) {
+            this._offLang = window.sac.lang.onChange(() => this._relabel());
+        }
         // selectionchange fires on document, not the element - the only way
         // to reliably track caret movement inside a contenteditable.
         this._onDocSelect = () => this._handleSelectionChange();
@@ -116,7 +186,33 @@ class SacMdEditor extends HTMLElement {
             document.removeEventListener("selectionchange", this._onDocSelect);
             this._onDocSelect = null;
         }
+        if (this._offLang) { this._offLang(); this._offLang = null; }
     }
+
+    /** Every editor-owned string in the current language, in place - no
+     *  re-render, so the document and the caret are untouched. Only
+     *  attributes and toolbar text change; line textContent never does. */
+    _relabel() {
+        this._toolbar.querySelectorAll("button[data-fmt]").forEach((btn) => {
+            const spec = MD_TOOLBAR_TEXT[btn.dataset.fmt];
+            if (!spec) return;
+            const tip = mdT(spec[0], spec[1]);
+            btn.title = tip;
+            btn.setAttribute("aria-label", tip);
+            if (spec[2]) btn.textContent = mdT(spec[2], spec[3]);
+        });
+        // The :::secret badge is CSS generated content - its word travels as
+        // a custom property holding a CSS string (JSON quoting is valid CSS).
+        this._editor.style.setProperty("--sac-md-secret-label",
+            JSON.stringify(mdT("secret", "Secret")));
+        const reveal = this._revealLabel();
+        this._editor.querySelectorAll(".sac-reveal-toggle").forEach((el) => {
+            el.setAttribute("aria-label", reveal);
+            el.title = reveal;
+        });
+    }
+
+    _revealLabel() { return mdT("reveal", "Show / hide secret body"); }
 
     get value() {
         if (!this._editor) return "";
@@ -321,8 +417,8 @@ class SacMdEditor extends HTMLElement {
                 `<span class="block-marker">${escapeHtml(src)}</span>` +
                 `<span class="sac-reveal-toggle" contenteditable="false" ` +
                 `      role="button" tabindex="-1" ` +
-                `      aria-label="Toggle secret reveal" ` +
-                `      title="Show / hide secret body">` +
+                `      aria-label="${escapeAttr(this._revealLabel())}" ` +
+                `      title="${escapeAttr(this._revealLabel())}">` +
                 REVEAL_EYE_SVG +
                 `</span>`;
             return;
@@ -940,10 +1036,10 @@ class SacMdEditor extends HTMLElement {
                 return this._wrapInLine(line, sel, "`", "`", "code");
             }
             case "link": {
-                const url = window.prompt("Link URL", "https://");
+                const url = window.prompt(mdT("linkPrompt", "Link URL"), "https://");
                 if (!url) return;
                 const safe = /^(https?:|mailto:|#)/i.test(url) ? url : "https://" + url;
-                return this._wrapInLine(line, sel, "[", `](${safe})`, "link text");
+                return this._wrapInLine(line, sel, "[", `](${safe})`, mdT("linkText", "link text"));
             }
         }
     }
@@ -1920,7 +2016,9 @@ const TEMPLATE = `
         padding-bottom: 4px;
     }
     .line.secret-open:not(.active)::before {
-        content: "🔒 Secret";
+        /* The word comes from _relabel() (page language); the fallback
+           keeps the editor English without the kit. */
+        content: "\\1F512  " var(--sac-md-secret-label, "Secret");
         display: inline-block;
         padding: 2px 10px;
         font-size: 0.78em;

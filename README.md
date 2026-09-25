@@ -33,6 +33,14 @@ npx serve .        # http://localhost:3000 — the root page is the demo
 | Events | `input` (every edit), `change` (focus leaves after an edit) |
 | Methods | `focus()` |
 | Keyboard | Ctrl/Cmd+B/I/K · Enter continues lists · Tab soft-tabs · Backspace merges lines |
+| Language | Follows the page language through the kit's `sac.t` / `sac.lang`, relabelled live; ships German, keys `md-editor.*` |
+
+The editor's own strings (toolbar, reveal toggle, link prompt, the
+`:::secret` badge) switch with the page language at runtime, without
+re-rendering the document. It registers a German table itself; other
+languages go in through `sac.i18n.add(lang, { "md-editor.bold": … })`.
+Without the kit's `globals.js` it stays English. `placeholder` is your
+string, so translate it on your side.
 
 Styling is Shadow-DOM-scoped but driven by the kit's seed tokens
 (`--fg`, `--field`, `--accent`, `--text`, `--border`, `--on-accent`, …), so

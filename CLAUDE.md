@@ -80,7 +80,10 @@ Those are host concerns. This component only does the visual layer.
 Attributes `placeholder`, `readonly` · property `value` · events `input`,
 `change` (native, composed) · method `focus()`. Keyboard: Ctrl/Cmd+B/I/K,
 Enter list continuation, empty-item list exit, Backspace line merge, Tab
-soft-tab.
+soft-tab. i18n keys `md-editor.*` (hosts may add languages under them, so
+renaming a key is breaking too); strings follow `sac.lang` live via
+`_relabel()`, which only touches attributes, toolbar text and a CSS custom
+property, never line `textContent`.
 
 Known divergence from kit v2 conventions: the kit's value components fire
 `sac:change`/`sac:input` with `detail: { value }`; this editor still fires
