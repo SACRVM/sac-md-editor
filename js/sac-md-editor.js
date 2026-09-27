@@ -96,6 +96,10 @@
  *   off();                                   // or Editor.unregisterBlock(name)
  *   Editor.blocks                            // registered names
  *
+ * In read-only mode (no caret) a click or tap on any line of a masked
+ * block reveals / hides the whole block, like its eye; not when the click
+ * ends a text selection or hits a link.
+ *
  * match(src) is the general form: "open" / "close" bound a block, "line"
  * makes one self-contained line a block (a marker form). open/close is the
  * shorthand. Blocks are only recognised outside code fences, do not nest
@@ -188,6 +192,7 @@ function mdAddStrings() {
         "md-editor.linkPrompt":  "Link-Adresse",
         "md-editor.linkText":    "Linktext",
         "md-editor.reveal":      "Inhalt zeigen / verbergen",
+        "md-editor.revealHint":  "Klicken zum Zeigen oder Verbergen",
     });
 }
 
@@ -332,6 +337,7 @@ class SacMdEditor extends HTMLElement {
             this._tdLabels();
             if (this._tdlg.open) this._tdRender();
         }
+        this._syncRevealHints();
         const reveal = this._revealLabel();
         this._editor.querySelectorAll(".sac-reveal-toggle").forEach((el) => {
             el.setAttribute("aria-label", reveal);
@@ -403,6 +409,7 @@ class SacMdEditor extends HTMLElement {
                 this._renderAllInactive();
                 this._activeLine = null;
             }
+            this._syncRevealHints();
         }
     }
 
@@ -466,9 +473,23 @@ class SacMdEditor extends HTMLElement {
         });
         this._editor.addEventListener("click", (e) => {
             const toggle = e.target.closest?.(".sac-reveal-toggle");
-            if (!toggle) return;
-            const line = this._lineContaining(toggle);
-            if (line) this._toggleBlockReveal(line);
+            if (toggle) {
+                const line = this._lineContaining(toggle);
+                if (line) this._toggleBlockReveal(line);
+                return;
+            }
+            // Read-only has no caret, so no active line shows a masked body
+            // sharp - the eye would be the only way in. A click (or tap) on
+            // any line of a masked block toggles it instead. Not when the
+            // click ends a text selection (copying) or lands on a link.
+            if (!this.hasAttribute("readonly")) return;
+            if (e.target.closest?.("a")) return;
+            const sel = this._currentSelection();
+            if (sel && sel.rangeCount && !sel.getRangeAt(0).collapsed) return;
+            const line = this._lineContaining(e.target);
+            if (!line || !line.classList.contains("block-masked")) return;
+            const open = this._blockOpenLine(line);
+            if (open) this._toggleBlockReveal(open);
         });
 
         // Toolbar: mousedown.preventDefault keeps caret focus in the editor so
@@ -678,6 +699,7 @@ class SacMdEditor extends HTMLElement {
         if (src === "") classes.push("empty");
         line.className = classes.join(" ");
         line.dataset.block = block.type;
+        this._revealHint(line);
         // Registered blocks carry their name, tint and pill label on the
         // line itself (inline custom properties); anything else sheds them.
         if (block.def) {
@@ -2171,6 +2193,31 @@ class SacMdEditor extends HTMLElement {
         }
     }
 
+    /** The opening line of the block `line` belongs to (itself for an
+     *  opening line), or null. */
+    _blockOpenLine(line) {
+        for (let cur = line; cur; cur = cur.previousElementSibling) {
+            const b = cur.dataset.block;
+            if (b === "block-open") return cur;
+            if (b !== "block-body" && b !== "block-close") return null;
+        }
+        return null;
+    }
+
+    /** Read-only: masked block lines say they can be clicked (a tooltip; the
+     *  cursor is CSS). Editable: no tooltip - the caret reveals there. */
+    _revealHint(line) {
+        if (this.hasAttribute("readonly") && line.classList.contains("block-masked")) {
+            line.title = mdT("revealHint", "Click to show or hide");
+        } else if (line.hasAttribute("title")) {
+            line.removeAttribute("title");
+        }
+    }
+    _syncRevealHints() {
+        if (!this._editor) return;
+        for (const line of this._editor.querySelectorAll(".line.block-masked, .line[title]")) this._revealHint(line);
+    }
+
     /** Reveal-toggle click handler. From the opening line the eye icon
      *  lives on, walks forward to the block's close (or end of document) and
      *  flips .block-revealed on every line in the range; a one-line block
@@ -2758,6 +2805,8 @@ const TEMPLATE = `
         box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, #3b82f6) 10%, transparent);
     }
     :host(.is-readonly) .toolbar { display: none; }
+    /* Read-only: a masked block reveals on click (no caret to do it). */
+    :host(.is-readonly) .line.block-masked { cursor: pointer; }
     :host(.is-readonly) {
         background: transparent;
         border-color: transparent;
