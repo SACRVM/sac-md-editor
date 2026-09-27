@@ -115,7 +115,7 @@ className, color, css - see the header).
 Line classes `.block-*` are internal; a host styles its blocks through the
 definition's `css`. Keyboard: Ctrl/Cmd+B/I/K,
 Enter list continuation, empty-item list exit, Backspace line merge, Tab
-soft-tab, and in a table Tab / Shift+Tab cell navigation and Enter new row
+soft-tab, and in a table Tab / Shift+Tab cell navigation, Enter new row and Esc out
 (leaving a table re-aligns its pipes - a source edit that fires `input`).
 i18n keys `md-editor.*` (hosts may add languages under them, so
 renaming a key is breaking too); strings follow `sac.lang` live via

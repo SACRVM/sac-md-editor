@@ -65,6 +65,9 @@
  *                                          new row is added
  *   Enter                                  new empty row below; on an empty
  *                                          row it leaves the table
+ *   Esc                                    leaves the table: an empty row
+ *                                          goes, else the caret moves to the
+ *                                          (empty) line after the table
  * Leaving a table (caret moves out, or focus leaves the editor) lines its
  * pipes up again. That rewrites source text, so it is an edit: `input`
  * fires and it is undoable.
@@ -961,6 +964,15 @@ class SacMdEditor extends HTMLElement {
             }
         }
 
+        // Esc in a table: out of it. Stopped here so no host binding for
+        // Escape (a panel, a dialog) fires as well.
+        if (e.key === "Escape" && this._inTable()) {
+            e.preventDefault();
+            e.stopPropagation();
+            this._tableEscape();
+            return;
+        }
+
         if (e.key === "Enter" && !e.shiftKey && !(e.ctrlKey || e.metaKey)) {
             e.preventDefault();
             // In a table Enter adds a row - it must not delete a selected
@@ -1486,18 +1498,54 @@ class SacMdEditor extends HTMLElement {
     _tableEnter() {
         const line = this._activeLine;
         const type = line.dataset.block;
-        if (type === "table-row" && tableCells(line.textContent).every((c) => c === "")) {
-            const above = line.previousElementSibling;
-            line.replaceChildren(document.createTextNode(""));
-            this._applyBlockClassFor(line, "");
-            this._placeCaretInLine(line, 0);
-            if (above && TABLE_TYPES.has(above.dataset.block)) this._formatTableAt(above);
-            this._dirty = true;
-            this.dispatchEvent(new Event("input", { bubbles: true }));
+        if (this._isEmptyRow(line)) {
+            this._tableExitRow(line);
             return;
         }
         const anchor = type === "table-head" && line.nextElementSibling ? line.nextElementSibling : line;
         this._tableAddRow(anchor);
+    }
+
+    _isEmptyRow(line) {
+        return line.dataset.block === "table-row" && tableCells(line.textContent).every((c) => c === "");
+    }
+
+    /** An empty body row leaves the table: it becomes the plain empty line
+     *  under it, caret there, and the table's pipes line up. */
+    _tableExitRow(line) {
+        const above = line.previousElementSibling;
+        line.replaceChildren(document.createTextNode(""));
+        this._applyBlockClassFor(line, "");
+        this._placeCaretInLine(line, 0);
+        if (above && TABLE_TYPES.has(above.dataset.block)) this._formatTableAt(above);
+        this._dirty = true;
+        this.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+
+    /** Esc in a table. On an empty row it is Enter's exit (the row goes);
+     *  anywhere else the caret moves to the line after the table - a new
+     *  empty one when that line holds text or the table ends the document. */
+    _tableEscape() {
+        const line = this._activeLine;
+        if (this._isEmptyRow(line)) {
+            this._tableExitRow(line);
+            return;
+        }
+        const rows = this._tableBlock(line);
+        const last = rows[rows.length - 1];
+        let after = last.nextElementSibling;
+        const added = !after || after.textContent !== "";
+        if (added) {
+            after = document.createElement("div");
+            after.className = "line";
+            last.after(after);
+        }
+        this._activateLine(after, 0);
+        this._formatTableAt(rows[0]);
+        if (added) {
+            this._dirty = true;
+            this.dispatchEvent(new Event("input", { bubbles: true }));
+        }
     }
 
     /** Insert an empty row after `anchor` and put the caret in its first cell. */

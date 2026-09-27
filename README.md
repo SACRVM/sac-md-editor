@@ -34,7 +34,7 @@ npx serve .        # http://localhost:3000 — the root page is the demo
 | Events | `sac:input` (once per edit) and `sac:change` (focus leaves after an edit), `detail: { value }`, bubbling, not composed — the kit convention. Native `input` / `change` still fire for older hosts |
 | Methods | `focus()` |
 | Static | `registerBlock(def)` → unregister function · `unregisterBlock(name)` · `blocks` — see [Blocks](#blocks-registerblock) |
-| Keyboard | Ctrl/Cmd+B/I/K · Enter continues lists · Tab soft-tabs · Backspace merges lines · in a table: Tab / Shift+Tab move between cells, Enter adds a row |
+| Keyboard | Ctrl/Cmd+B/I/K · Enter continues lists · Tab soft-tabs · Backspace merges lines · in a table: Tab / Shift+Tab move between cells, Enter adds a row, Esc leaves the table |
 | Language | Follows the page language through the kit's `sac.t` / `sac.lang`, relabelled live; ships German, keys `md-editor.*` |
 
 The editor's own strings (toolbar, reveal toggle, link prompt, the
