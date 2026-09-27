@@ -1,3 +1,6 @@
+# Git Bash crash dumps
+*.stackdump
+
 # Firepit + Claude Code — shared config versioned, runtime/personal local
 .firepit/inbox/
 .firepit/runs/
