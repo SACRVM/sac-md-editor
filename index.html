@@ -19,8 +19,9 @@
         .demo-shell header { margin-bottom: 2rem; }
         .demo-shell h1 { font-size: 2rem; font-weight: 800; }
         .demo-shell p.lead { color: var(--text-muted); margin-top: .5rem; }
-        sac-md-editor { display: block; min-height: 420px; border: 1px solid var(--border);
-                        border-radius: var(--radius-m, 8px); }
+        /* Size only - border, radius and focus ring are the component's own,
+           so the demo shows what every host gets. */
+        sac-md-editor { min-height: 420px; }
         .demo-actions { display: flex; gap: .5rem; margin: 1rem 0 2rem; }
     </style>
 </head>

@@ -1669,12 +1669,12 @@ const TEMPLATE = `
            affordance at all. Focus pulls the border toward the accent. */
         background: var(--field, rgba(0, 0, 0, 0.18));
         border: 1px solid var(--border, color-mix(in srgb, var(--fg, #fff) 8%, transparent));
-        border-radius: 12px;
+        border-radius: var(--radius-l, 6px);   /* a surface */
         transition: border-color 0.15s, box-shadow 0.15s;
     }
     :host(:focus-within) {
-        border-color: rgba(59, 130, 246, 0.5);
-        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        border-color: color-mix(in srgb, var(--accent, #3b82f6) 50%, transparent);
+        box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, #3b82f6) 10%, transparent);
     }
     :host(.is-readonly) .toolbar { display: none; }
     :host(.is-readonly) {
@@ -1689,13 +1689,15 @@ const TEMPLATE = `
         padding: 8px 12px;
         background: color-mix(in srgb, var(--fg, #fff) 2%, transparent);
         border-bottom: 1px solid var(--border, color-mix(in srgb, var(--fg, #fff) 8%, transparent));
-        border-radius: 12px 12px 0 0;
+        border-radius: inherit;   /* the host's top corners - cannot drift */
+        border-bottom-left-radius: 0;
+        border-bottom-right-radius: 0;
     }
     .toolbar button {
         padding: 5px 9px;
         min-width: 30px;
         height: 28px;
-        border-radius: 6px;
+        border-radius: var(--radius-m, 4px);   /* a control */
         background: transparent;
         border: 1px solid transparent;
         color: var(--text-muted, #888);
@@ -1752,7 +1754,7 @@ const TEMPLATE = `
         min-height: 1.6em;
         padding: 2px 10px;
         margin: 0 -10px;
-        border-radius: 4px;
+        border-radius: var(--radius-m, 4px);
         white-space: pre-wrap;
         word-break: break-word;
         transition: background-color 0.12s ease;
@@ -1772,7 +1774,7 @@ const TEMPLATE = `
        at low opacity - keeps the "exactly-these-chars-are-selected"
        affordance without the default bright system blue. */
     .editor ::selection {
-        background: rgba(59, 130, 246, 0.28);
+        background: color-mix(in srgb, var(--accent, #3b82f6) 28%, transparent);
         color: inherit;
     }
 
@@ -1936,8 +1938,8 @@ const TEMPLATE = `
 
     /* Opening fence: rounded top + top border for the code-card look. */
     .line.fence:not(.active):has(+ .line.fence-body) {
-        border-top-left-radius: 6px;
-        border-top-right-radius: 6px;
+        border-top-left-radius: var(--radius-m, 4px);
+        border-top-right-radius: var(--radius-m, 4px);
         min-height: 10px;
         padding-top: 6px;
         box-shadow: inset 0 1px 0 color-mix(in srgb, var(--fg, #fff) 8%, transparent),
@@ -1946,8 +1948,8 @@ const TEMPLATE = `
     }
     /* Closing fence: rounded bottom + bottom border. */
     .line.fence-body + .line.fence:not(.active) {
-        border-bottom-left-radius: 6px;
-        border-bottom-right-radius: 6px;
+        border-bottom-left-radius: var(--radius-m, 4px);
+        border-bottom-right-radius: var(--radius-m, 4px);
         min-height: 10px;
         padding-bottom: 6px;
         box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--fg, #fff) 8%, transparent),
@@ -2084,7 +2086,7 @@ const TEMPLATE = `
         opacity: 0.6;
         cursor: pointer;
         user-select: none;
-        border-radius: 3px;
+        border-radius: var(--radius-m, 4px);
         transition: opacity 0.12s, background 0.12s;
         vertical-align: middle;
         color: var(--accent-warm, #f59e0b);
@@ -2115,7 +2117,7 @@ const TEMPLATE = `
         height: 14px;
         vertical-align: -3px;
         border: 1.5px solid var(--border, color-mix(in srgb, var(--fg, #fff) 30%, transparent));
-        border-radius: 3px;
+        border-radius: var(--radius-s, 2px);
         position: relative;
         color: transparent;
         font-size: 0;
@@ -2159,14 +2161,14 @@ const TEMPLATE = `
     .line code {
         background: color-mix(in srgb, var(--fg, #fff) 8%, transparent);
         padding: 1px 5px;
-        border-radius: 3px;
+        border-radius: var(--radius-s, 2px);
         font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
         font-size: 0.9em;
     }
     .line a {
         color: var(--accent, #3b82f6);
         text-decoration: underline;
-        text-decoration-color: rgba(59, 130, 246, 0.4);
+        text-decoration-color: color-mix(in srgb, var(--accent, #3b82f6) 40%, transparent);
         text-underline-offset: 2px;
     }
     .line a:hover { text-decoration-color: var(--accent, #3b82f6); }
@@ -2178,7 +2180,7 @@ const TEMPLATE = `
         max-width: 100%;
         max-height: 320px;
         height: auto;
-        border-radius: 4px;
+        border-radius: var(--radius-m, 4px);
         vertical-align: middle;
         display: inline-block;
     }
