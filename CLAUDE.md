@@ -36,7 +36,8 @@ even if it looks right on screen. When reviewing a patch, check this first.
   marked's HTML renderer.
 - **Inline HTML policy**: escape-don't-parse, with DOMPurify as the second
   line of defence. User-typed `<script>` is text, always.
-- **Cross-line state**: a single forward scan tracks `inFence` (``` groups)
+- **Cross-line state**: a single forward scan tracks `inFence` (``` / ~~~ groups;
+  holds the opening run, since only the same character at least as long closes)
   and `inSecret`. Fence-awareness is load-bearing: `:::secret` inside a code
   fence is text, not a boundary. Editing a line re-scans forward because one
   keystroke can flip the state of everything below (type ``` on a line).

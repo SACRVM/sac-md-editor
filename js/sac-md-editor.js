@@ -44,7 +44,8 @@
  *
  * Keyboard:
  *   Ctrl/Cmd+B, Ctrl/Cmd+I, Ctrl/Cmd+K    bold / italic / link
- *   Enter                                  split; continues `- `/`* `/`1. ` lists
+ *   Enter                                  split; continues `- ` `* ` `+ ` `1. ` `1) `
+ *                                          lists with the same marker
  *   Enter on empty list item               exits the list
  *   Backspace at start of non-first line   merge with previous line
  *   Tab                                    two-space soft tab
@@ -346,15 +347,16 @@ class SacMdEditor extends HTMLElement {
 
     /** Render a line's inner DOM from its source. Adds marker spans and
      *  inline wrappers while preserving textContent exactly. `state` carries
-     *  the cross-line trackers: inFence (``` group) and inSecret (:::secret
+     *  the cross-line trackers: inFence (``` / ~~~ group - the opening run) and inSecret (:::secret
      *  group) — each must advance on every line even when rendering wouldn't
      *  otherwise change the output. */
     _renderLine(line, src = null, state = null) {
         if (src === null) src = line.textContent;
 
-        const isFenceBoundary = /^```/.test(src);
         const insideFenceNow = state ? state.inFence : false;
-        if (isFenceBoundary && state) state.inFence = !state.inFence;
+        const fence = fenceStep(src, insideFenceNow);
+        const isFenceBoundary = fence.boundary;
+        if (state) state.inFence = fence.open;
 
         // Secret boundary: :::secret opens, :::end closes. Only honoured outside
         // a code fence — inside a fence these are literal text.
@@ -392,7 +394,7 @@ class SacMdEditor extends HTMLElement {
             }
         }
         if (blockType === "task") {
-            const m = src.match(/^(\s*[-*]\s+)\[([ xX])\](\s+)(.*)$/);
+            const m = src.match(TASK_RE);
             if (m) {
                 const checked = m[2] === "x" || m[2] === "X";
                 const boxClass = checked ? "task-box checked" : "task-box";
@@ -466,7 +468,7 @@ class SacMdEditor extends HTMLElement {
     _applyBlockClassFor(line, src = null) {
         if (src === null) src = line.textContent;
         const state = this._stateBefore(line);
-        const isFenceBoundary = /^```/.test(src);
+        const isFenceBoundary = fenceStep(src, state.inFence).boundary;
         const isSecretBoundary = !state.inFence &&
             (/^:{2,3}secret(\s|$)/.test(src) || /^:{2,3}end(\s|$)/.test(src));
         this._applyBlockClass(line, src, state.inFence, isFenceBoundary,
@@ -859,12 +861,13 @@ class SacMdEditor extends HTMLElement {
         const before = src.substring(0, offset);
         const after  = src.substring(offset);
 
-        // List continuation: detect a `- `/`* `/`1. ` prefix on the current
-        // line and duplicate it on the new line, unless the current prefix
-        // is all we had (empty item) - in which case exit the list.
-        const listMatch = before.match(/^(\s*)([-*]|(\d+)\.)\s+(.*)$/);
+        // List continuation: detect a `- `/`* `/`+ `/`1. `/`1) ` prefix on
+        // the current line and continue it on the new line with the same
+        // marker (ordered: next number, same delimiter), unless the current
+        // prefix is all we had (empty item) - in which case exit the list.
+        const listMatch = before.match(/^(\s*)([-*+]|(\d{1,9})([.)]))\s+(.*)$/);
         if (listMatch) {
-            const [, indent, marker, numStr, content] = listMatch;
+            const [, indent, marker, numStr, delim, content] = listMatch;
             if (!content && !after.trim()) {
                 // Empty item + nothing after = exit the list.
                 line.replaceChildren(document.createTextNode(""));
@@ -874,7 +877,7 @@ class SacMdEditor extends HTMLElement {
                 this.dispatchEvent(new Event("input", { bubbles: true }));
                 return;
             }
-            const nextMarker = numStr ? `${parseInt(numStr) + 1}.` : marker;
+            const nextMarker = numStr ? `${parseInt(numStr, 10) + 1}${delim}` : marker;
             const newSrc = `${indent}${nextMarker} `;
             this._splitAt(line, before, newSrc + after, newSrc.length);
             return;
@@ -1095,7 +1098,8 @@ class SacMdEditor extends HTMLElement {
         if (target.length === 0) return;
 
         const isOrdered = /^\d+\.\s$/.test(prefix);
-        const prefixRe  = isOrdered ? /^\d+\.\s/ : null;
+        // Any existing number counts as "already ordered", `1)` included.
+        const prefixRe  = isOrdered ? /^\d{1,9}[.)]\s/ : null;
         const hasPrefix = (text) => prefixRe ? prefixRe.test(text) : text.startsWith(prefix);
         const stripPrefix = (text) => prefixRe
             ? text.replace(prefixRe, "")
@@ -1140,24 +1144,28 @@ class SacMdEditor extends HTMLElement {
     }
 
     /** Wrap a run of selected lines in a fenced code block by inserting
-     *  ``` markers before the first and after the last. The enclosed lines
+     *  fence markers before the first and after the last. The fence is ```
+     *  unless a selected line starts with a backtick run itself - then one
+     *  backtick longer, so the inner run cannot close it. The enclosed lines
      *  re-render as fence-body (monospace + background). */
     _wrapAsCodeFence(lines) {
         if (lines.length === 0) return;
         const first = lines[0];
         const last  = lines[lines.length - 1];
+        const inner = Math.max(0, ...lines.map(l => (/^`*/.exec(l.textContent) || [""])[0].length));
+        const marker = "`".repeat(Math.max(3, inner + 1));
 
         const open = document.createElement("div");
         open.className = "line";
-        open.textContent = "```";
+        open.textContent = marker;
         first.before(open);
-        this._renderLine(open, "```", this._stateBefore(open));
+        this._renderLine(open, marker, this._stateBefore(open));
 
         const close = document.createElement("div");
         close.className = "line";
-        close.textContent = "```";
+        close.textContent = marker;
         last.after(close);
-        this._renderLine(close, "```", this._stateBefore(close));
+        this._renderLine(close, marker, this._stateBefore(close));
 
         // Re-render the enclosed inactive lines so they pick up fence-body.
         // The active line stays flat but gets its class updated.
@@ -1475,8 +1483,9 @@ class SacMdEditor extends HTMLElement {
         for (const sib of Array.from(this._editor.children)) {
             if (sib === line) return state;
             const text = sib.textContent;
-            if (/^```/.test(text)) state.inFence = !state.inFence;
-            else if (!state.inFence) {
+            const fence = fenceStep(text, state.inFence);
+            state.inFence = fence.open;
+            if (!fence.boundary && !state.inFence) {
                 if (/^:{2,3}secret(\s|$)/.test(text)) state.inSecret = true;
                 else if (/^:{2,3}end(\s|$)/.test(text)) state.inSecret = false;
             }
@@ -1504,26 +1513,51 @@ class SacMdEditor extends HTMLElement {
 
 const BLOCK_PREFIX_RE = {
     heading: /^(#{1,6}\s)/,
-    ul:      /^(\s*[-*]\s)/,
-    ol:      /^(\s*\d+\.\s)/,
+    ul:      /^(\s*[-*+]\s)/,
+    ol:      /^(\s*\d{1,9}[.)]\s)/,
     quote:   /^(>\s?)/,
 };
+
+// List item prefixes (CommonMark): bullets `-` `*` `+`; ordered `1.` or
+// `1)` with at most 9 digits. TASK_RE captures prefix, box state, gap, rest.
+const TASK_RE = /^(\s*(?:[-*+]|\d{1,9}[.)])\s+)\[([ xX])\](\s+)(.*)$/;
+// Thematic break (CommonMark): up to 3 leading spaces, then 3 or more of
+// the same `-` `*` `_`, spaces and tabs allowed between them.
+const HR_RE = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
+
+/** Code fence step (CommonMark). Outside a fence (`open` false) a line
+ *  opens one with 3+ backticks or 3+ tildes, info string allowed. Inside,
+ *  only the SAME character, at least as many of it and nothing else on the
+ *  line closes it - so ~~~ can quote ``` and ```` can quote ```, and a
+ *  fence documenting fences stays text. Returns { boundary, open } where
+ *  `open` is the opening run while inside a fence, false outside. */
+function fenceStep(src, open) {
+    if (!open) {
+        const m = /^(`{3,}|~{3,})/.exec(src);
+        return m ? { boundary: true, open: m[1] } : { boundary: false, open: false };
+    }
+    const m = /^(`{3,}|~{3,})[ \t]*$/.exec(src);
+    if (m && m[1][0] === open[0] && m[1].length >= open.length) return { boundary: true, open: false };
+    return { boundary: false, open };
+}
 
 function parseLineBlock(src) {
     if (src === "") return { type: "empty", classes: "" };
     const h = src.match(/^(#{1,6})\s+/);
     if (h) return { type: "heading", classes: `heading h${h[1].length}` };
+    // Before lists: `- - -` and `* * *` would otherwise read as bullets.
+    if (HR_RE.test(src))            return { type: "hr", classes: "hr" };
     // Task lists get their own type so the `[ ]`/`[x]` render as a checkbox.
     // Tested before plain lists because the pattern is a strict superset.
-    if (/^\s*[-*]\s+\[[ xX]\]\s+/.test(src)) {
-        const checked = /\[[xX]\]/.test(src);
+    const task = TASK_RE.exec(src);
+    if (task) {
+        const checked = task[2] !== " ";
         return { type: "task", classes: checked ? "task task-done" : "task" };
     }
-    if (/^\s*[-*]\s+/.test(src))    return { type: "ul",    classes: "list ul" };
-    if (/^\s*\d+\.\s+/.test(src))   return { type: "ol",    classes: "list ol" };
+    if (/^\s*[-*+]\s+/.test(src))        return { type: "ul",    classes: "list ul" };
+    if (/^\s*\d{1,9}[.)]\s+/.test(src))  return { type: "ol",    classes: "list ol" };
     if (/^>\s?/.test(src))          return { type: "quote", classes: "quote" };
-    if (/^\s*(---|\*\*\*|___)\s*$/.test(src)) return { type: "hr", classes: "hr" };
-    if (/^```/.test(src))           return { type: "fence", classes: "fence" };
+    if (/^(`{3,}|~{3,})/.test(src)) return { type: "fence", classes: "fence" };
     if (/^:{2,3}secret(\s|$)/.test(src)) return { type: "secret-open",  classes: "secret-marker secret-open" };
     if (/^:{2,3}end(\s|$)/.test(src))    return { type: "secret-close", classes: "secret-marker secret-close" };
     return { type: "paragraph", classes: "" };
