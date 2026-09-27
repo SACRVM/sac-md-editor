@@ -36,13 +36,22 @@ even if it looks right on screen. When reviewing a patch, check this first.
   marked's HTML renderer.
 - **Inline HTML policy**: escape-don't-parse, with DOMPurify as the second
   line of defence. User-typed `<script>` is text, always.
-- **Cross-line state**: a single forward scan tracks `inFence` (``` / ~~~ groups;
-  holds the opening run, since only the same character at least as long closes)
-  and `inSecret`. Fence-awareness is load-bearing: `:::secret` inside a code
-  fence is text, not a boundary. Every edit ends in `_syncBlockState()`, because
-  one keystroke can flip the state of everything below (type ``` on a line):
-  each line remembers the state it was rendered with, and the sweep
-  re-renders only the lines whose state changed.
+- **Cross-line state**: `classifyLine(src, state, setext)` is the ONE place
+  that decides what a line is; `advanceState` is the one place that moves
+  state downward. State = `inFence` (the opening ``` / ~~~ run, since only the
+  same character at least as long closes), `inSecret`, `prev` (what the line
+  above was: setext underlines, indented code and link definitions depend on
+  it) and `listCtx` (an indented line inside a list is continuation, not
+  code). Fence-awareness is load-bearing: `:::secret` inside a code fence is
+  text, not a boundary.
+- **The sweep**: every edit ends in `_syncBlockState()`, because one keystroke
+  can change lines far away - type ``` and everything below becomes code;
+  type `===` and the paragraph ABOVE becomes a heading; add `[id]: url` and
+  references anywhere resolve. It walks top-down (state, types, link
+  definitions), then bottom-up (setext levels), then re-renders exactly the
+  lines whose key (`_lineKey`: state + setext + definitions for lines with
+  `]`) changed. Plain typing re-renders nothing. Loading a value uses the same
+  sweep on detached lines, then inserts them in one go.
 - **Masked blocks**: `:::secret` … `:::end` bodies get `.secret-body` + CSS
   blur; an eye toggle (contenteditable=false, one-line SVG so no stray text
   nodes break the round-trip) sits on the boundary line and flips

@@ -239,10 +239,19 @@ class SacMdEditor extends HTMLElement {
         // Always at least one line - an empty document still needs a caret target.
         if (lines.length === 0) lines.push("");
         this._activeLine = null;
-        const state = { inFence: false, inSecret: false };
-        this._editor.replaceChildren(
-            ...lines.map(src => this._buildRenderedLine(src, state))
-        );
+        // Plain lines first, then one sweep renders them all: a line's look
+        // can depend on lines BELOW it (a setext underline, a link
+        // definition), which a top-down build cannot see yet. Rendered while
+        // still detached, then inserted in one go - far cheaper than
+        // rewriting thousands of attached lines.
+        const built = lines.map((src) => {
+            const line = document.createElement("div");
+            line.className = "line";
+            line.textContent = src;
+            return line;
+        });
+        this._syncBlockState(built);
+        this._editor.replaceChildren(...built);
         this._dirty = false;
     }
 
@@ -290,7 +299,7 @@ class SacMdEditor extends HTMLElement {
         }
 
         // Seed with a single empty line so the caret has somewhere to go.
-        this._editor.replaceChildren(this._buildRenderedLine("", { inFence: false, inSecret: false }));
+        this._editor.replaceChildren(this._buildRenderedLine("", freshState()));
         this._resetHistory();
 
         // Host-level input listener: catches both the native input events
@@ -353,28 +362,22 @@ class SacMdEditor extends HTMLElement {
      *  the cross-line trackers: inFence (``` / ~~~ group - the opening run) and inSecret (:::secret
      *  group) — each must advance on every line even when rendering wouldn't
      *  otherwise change the output. */
-    _renderLine(line, src = null, state = null) {
+    _renderLine(line, src = null, state = null, setext) {
         if (src === null) src = line.textContent;
 
-        // Remember what this render assumed, for _syncBlockState. No state
-        // passed = unknown, so the next sweep re-renders it properly.
-        line._blockState = state ? stateKey(state) : undefined;
-        const insideFenceNow = state ? state.inFence : false;
-        const fence = fenceStep(src, insideFenceNow);
-        const isFenceBoundary = fence.boundary;
-        if (state) state.inFence = fence.open;
-
-        // Secret boundary: :::secret opens, :::end closes. Only honoured outside
-        // a code fence — inside a fence these are literal text.
-        const isSecretOpen  = !insideFenceNow && /^:{2,3}secret(\s|$)/.test(src);
-        const isSecretClose = !insideFenceNow && /^:{2,3}end(\s|$)/.test(src);
-        const insideSecretNow = state ? state.inSecret : false;
-        if (state && isSecretOpen)  state.inSecret = true;
-        if (state && isSecretClose) state.inSecret = false;
-        const isSecretBoundary = isSecretOpen || isSecretClose;
+        // No state passed = unknown context: render as a top-of-document
+        // line and leave the key unset, so the next sweep redoes it.
+        const known = !!state;
+        if (!state) state = freshState();
+        if (setext === undefined) setext = known ? this._setextAfter(line, state, src) : 0;
+        const block = classifyLine(src, state, setext);
+        // Remember what this render assumed, for _syncBlockState.
+        line._blockState = known ? this._lineKey(state, setext, src) : undefined;
+        advanceState(state, src, classifyLine(src, state).type);
 
         line.classList.remove("active");
-        this._applyBlockClass(line, src, insideFenceNow, isFenceBoundary, insideSecretNow, isSecretBoundary);
+        this._applyBlockClass(line, src, block);
+        const defs = this._linkDefs;
 
         const blockType = line.dataset.block || "";
         if (blockType === "fence-body") {
@@ -395,7 +398,7 @@ class SacMdEditor extends HTMLElement {
             if (m) {
                 const prefix = m[1];
                 const rest   = src.substring(prefix.length);
-                line.innerHTML = `<span class="block-marker">${escapeHtml(prefix)}</span>${renderInline(rest)}`;
+                line.innerHTML = `<span class="block-marker">${escapeHtml(prefix)}</span>${renderInline(rest, defs)}`;
                 return;
             }
         }
@@ -408,7 +411,7 @@ class SacMdEditor extends HTMLElement {
                     `<span class="block-marker">${escapeHtml(m[1])}</span>` +
                     `<span class="${boxClass}">[${m[2]}]</span>` +
                     `<span class="block-marker">${escapeHtml(m[3])}</span>` +
-                    renderInline(m[4]);
+                    renderInline(m[4], defs);
                 return;
             }
         }
@@ -440,16 +443,28 @@ class SacMdEditor extends HTMLElement {
             // to just the text — blurring the whole line would smear the
             // card's left border too. Source is preserved (line.textContent
             // still equals src).
-            const inner = src === "" ? "" : renderInline(src);
+            const inner = src === "" ? "" : renderInline(src, defs);
             line.innerHTML = `<span class="secret-body-text">${inner}</span>`;
             return;
         }
-        // Plain paragraph (or empty line).
+        if (blockType === "indent-code") {
+            // The 4-space / tab indent is syntax, not code: a marker, hidden
+            // on inactive lines, so the card shows the code flush.
+            const indent = INDENT_CODE_RE.exec(src)[1];
+            line.innerHTML = `<span class="block-marker">${escapeHtml(indent)}</span>` +
+                `<span class="code-body">${escapeHtml(src.substring(indent.length))}</span>`;
+            return;
+        }
+        if (blockType === "setext" || blockType === "linkdef") {
+            line.innerHTML = `<span class="block-marker">${escapeHtml(src)}</span>`;
+            return;
+        }
+        // Plain paragraph (setext heading text included) or empty line.
         if (src === "") {
             line.innerHTML = "";
             return;
         }
-        line.innerHTML = renderInline(src);
+        line.innerHTML = renderInline(src, defs);
     }
 
     /** Flatten a line to a single text node, preserving the caret position
@@ -474,12 +489,31 @@ class SacMdEditor extends HTMLElement {
     _applyBlockClassFor(line, src = null) {
         if (src === null) src = line.textContent;
         const state = this._stateBefore(line);
-        line._blockState = stateKey(state);
-        const isFenceBoundary = fenceStep(src, state.inFence).boundary;
-        const isSecretBoundary = !state.inFence &&
-            (/^:{2,3}secret(\s|$)/.test(src) || /^:{2,3}end(\s|$)/.test(src));
-        this._applyBlockClass(line, src, state.inFence, isFenceBoundary,
-                              state.inSecret, isSecretBoundary);
+        const setext = this._setextAfter(line, state, src);
+        line._blockState = this._lineKey(state, setext, src);
+        this._applyBlockClass(line, src, classifyLine(src, state, setext));
+    }
+
+    /** The sweep key for a line: its state, its setext level and - for a
+     *  line that could hold a reference link - the link definitions. */
+    _lineKey(state, setext, src) {
+        return stateKey(state, setext) + (src.includes("]") ? "|" + (this._linkDefsKey || "") : "");
+    }
+
+    /** Setext lookahead for ONE line (the single-line edit paths; the sweep
+     *  computes all levels in one backward pass instead). A paragraph line
+     *  is a heading when the paragraph it belongs to ends in an underline. */
+    _setextAfter(line, state, src) {
+        if (classifyLine(src, state).type !== "paragraph") return 0;
+        const st = advanceState({ ...state }, src, "paragraph");
+        for (let cur = line.nextElementSibling; cur; cur = cur.nextElementSibling) {
+            const text = cur.textContent;
+            const type = classifyLine(text, st).type;
+            if (type === "setext") return text.trim()[0] === "=" ? 1 : 2;
+            if (type !== "paragraph") return 0;
+            advanceState(st, text, type);
+        }
+        return 0;
     }
 
     /** Recompute the line's block-level class without touching its inner DOM.
@@ -488,16 +522,9 @@ class SacMdEditor extends HTMLElement {
      *
      *  Preserves the .secret-revealed class across re-classification so a
      *  keystroke on a revealed boundary line doesn't re-mask the block. */
-    _applyBlockClass(line, src, inFence, isFenceBoundary, inSecret, isSecretBoundary) {
+    _applyBlockClass(line, src, block) {
         const active   = line.classList.contains("active");
         const revealed = line.classList.contains("secret-revealed");
-        const block = inFence && !isFenceBoundary
-            ? { type: "fence-body", classes: "fence-body" }
-            : isFenceBoundary
-                ? { type: "fence", classes: "fence" }
-                : inSecret && !isSecretBoundary
-                    ? { type: "secret-body", classes: "secret-body" }
-                    : parseLineBlock(src);
         const classes = ["line"];
         if (active)    classes.push("active");
         if (revealed)  classes.push("secret-revealed");
@@ -510,10 +537,14 @@ class SacMdEditor extends HTMLElement {
     /** Rebuild classes + inner DOM for every line. Use after multi-line state
      *  may have shifted (blur, paste, programmatic value set). */
     _renderAllInactive() {
-        const state = { inFence: false, inSecret: false };
-        for (const line of Array.from(this._editor.children)) {
-            this._renderLine(line, null, state);
-        }
+        // Every line, the active one included, renders inactive; the sweep
+        // only skips this._activeLine, so hide it from the sweep. The field
+        // itself is the caller's business, exactly as before.
+        const active = this._activeLine;
+        this._activeLine = null;
+        for (const line of this._editor.children) line._blockState = undefined;
+        this._syncBlockState();
+        this._activeLine = active;
     }
 
     // -----------------------------------------------------------------------
@@ -756,7 +787,7 @@ class SacMdEditor extends HTMLElement {
         // Guard against the editor ever being emptied out completely - keep
         // at least one line so there's always a caret target.
         if (this._editor.children.length === 0) {
-            const line = this._buildRenderedLine("", { inFence: false });
+            const line = this._buildRenderedLine("", freshState());
             this._editor.appendChild(line);
             this._placeCaretInLine(line, 0);
         }
@@ -874,7 +905,7 @@ class SacMdEditor extends HTMLElement {
         // prefix is all we had (empty item) - in which case exit the list.
         // Inside a code fence `- ` and `> ` are code, not structure: a plain
         // split, no continuation.
-        if (line.dataset.block === "fence-body") {
+        if (line.dataset.block === "fence-body" || line.dataset.block === "indent-code") {
             this._splitAt(line, before, after, 0);
             return;
         }
@@ -1185,7 +1216,7 @@ class SacMdEditor extends HTMLElement {
         // The active line stays flat but gets its class updated.
         for (const line of lines) {
             if (line === this._activeLine) {
-                this._applyBlockClass(line, line.textContent, true, false);
+                this._applyBlockClassFor(line);
             } else {
                 this._renderLine(line, null, this._stateBefore(line));
             }
@@ -1493,7 +1524,7 @@ class SacMdEditor extends HTMLElement {
     /** Compute the fence + secret state just before a given line — lets us
      *  render a single line correctly without re-rendering the whole document. */
     _stateBefore(line) {
-        const state = { inFence: false, inSecret: false };
+        const state = freshState();
         for (const sib of Array.from(this._editor.children)) {
             if (sib === line) return state;
             advanceState(state, sib.textContent);
@@ -1508,15 +1539,42 @@ class SacMdEditor extends HTMLElement {
      *  walks the document once and re-renders exactly the lines whose state
      *  no longer matches. Typing plain text changes no state, so the walk
      *  re-renders nothing - one regex pass per line. */
-    _syncBlockState() {
+    _syncBlockState(lines = null) {
         if (!this._editor) return;
-        const state = { inFence: false, inSecret: false };
-        for (const line of Array.from(this._editor.children)) {
-            if (line._blockState !== stateKey(state)) {
-                if (line === this._activeLine) this._applyBlockClassFor(line);
-                else this._renderLine(line, null, { ...state });
+        if (!lines) lines = Array.from(this._editor.children);
+        const texts = lines.map((l) => l.textContent);
+        // Pass 1, top-down: the state before each line, its type, and the
+        // link definitions (anywhere in the document, like CommonMark).
+        const states = [], types = [], defs = {};
+        const state = freshState();
+        for (const text of texts) {
+            states.push({ ...state });
+            const type = classifyLine(text, state).type;
+            types.push(type);
+            if (type === "linkdef") addLinkDef(defs, text);
+            advanceState(state, text, type);
+        }
+        // Pass 2, bottom-up: which paragraph lines an underline turns into a
+        // setext heading (the whole paragraph above it, like CommonMark).
+        const setext = new Array(lines.length).fill(0);
+        let carry = 0;
+        for (let i = lines.length - 1; i >= 0; i--) {
+            if (types[i] === "setext") carry = texts[i].trim()[0] === "=" ? 1 : 2;
+            else if (types[i] === "paragraph") setext[i] = carry;
+            else carry = 0;
+        }
+        this._linkDefs = defs;
+        this._linkDefsKey = JSON.stringify(defs);
+        // Pass 3: re-render exactly the lines whose context changed.
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            if (line._blockState === this._lineKey(states[i], setext[i], texts[i])) continue;
+            if (line === this._activeLine) {
+                line._blockState = this._lineKey(states[i], setext[i], texts[i]);
+                this._applyBlockClass(line, texts[i], classifyLine(texts[i], states[i], setext[i]));
+            } else {
+                this._renderLine(line, texts[i], { ...states[i] }, setext[i]);
             }
-            advanceState(state, line.textContent);
         }
     }
 
@@ -1568,23 +1626,100 @@ function fenceStep(src, open) {
     return { boundary: false, open };
 }
 
-/** Advance the cross-line state past one line: fences first (inside a fence
- *  nothing else counts), then :::secret / :::end outside fences. Mutates
- *  and returns `state`. The ONE definition of how state flows downward -
- *  _stateBefore and _syncBlockState both walk with it. */
-function advanceState(state, text) {
-    const fence = fenceStep(text, state.inFence);
-    state.inFence = fence.open;
-    if (!fence.boundary && !state.inFence) {
-        if (/^:{2,3}secret(\s|$)/.test(text)) state.inSecret = true;
-        else if (/^:{2,3}end(\s|$)/.test(text)) state.inSecret = false;
+// Setext heading underline (CommonMark): `=` for h1, `-` for h2, up to 3
+// leading spaces. Deviation: a dash underline needs 2+ dashes, so starting
+// a list ("- ") under a paragraph line does not flash the line above into
+// an h2 while you type.
+const SETEXT_RE = /^ {0,3}(=+|-{2,})[ \t]*$/;
+// Indented code block: 4 spaces or a tab.
+const INDENT_CODE_RE = /^( {4}|\t)/;
+// Link reference definition: [label]: url "optional title".
+const LINKDEF_RE = /^ {0,3}\[([^\]]+)\]:[ \t]*(<[^>]*>|\S+)(?:[ \t]+("[^"]*"|'[^']*'|\([^)]*\)))?[ \t]*$/;
+
+/** Cross-line state at the top of a document. inFence / inSecret as
+ *  before; `prev` is what the previous line was ("blank", "para",
+ *  "quote", "list", "code", "other") and `listCtx` whether a list is still
+ *  open (a blank line keeps it, an unindented non-list line ends it). */
+function freshState() {
+    return { inFence: false, inSecret: false, prev: "blank", listCtx: false };
+}
+
+/** THE line classifier. Everything that decides what a line is lives here:
+ *  fences first (inside one nothing else counts), then :::secret bounds,
+ *  secret bodies, setext underlines, indented code, link definitions and
+ *  finally the single-line syntax (parseLineBlock). `setext` is the level
+ *  (1/2) when this line belongs to a paragraph that an underline below
+ *  turns into a heading - it comes from lookahead, never from `state`. */
+function classifyLine(src, state, setext = 0) {
+    const fence = fenceStep(src, state.inFence);
+    if (state.inFence) {
+        return fence.boundary ? { type: "fence", classes: "fence" }
+                              : { type: "fence-body", classes: "fence-body" };
     }
+    if (fence.boundary) return { type: "fence", classes: "fence" };
+    if (/^:{2,3}secret(\s|$)/.test(src)) return { type: "secret-open",  classes: "secret-marker secret-open" };
+    if (/^:{2,3}end(\s|$)/.test(src))    return { type: "secret-close", classes: "secret-marker secret-close" };
+    if (state.inSecret) return { type: "secret-body", classes: "secret-body" };
+    // An underline only counts directly under paragraph text.
+    if (state.prev === "para" && SETEXT_RE.test(src)) {
+        const level = src.trim()[0] === "=" ? 1 : 2;
+        return { type: "setext", classes: `setext-underline setext-${level}` };
+    }
+    // Indented code cannot interrupt a paragraph, and inside a list an
+    // indented line is the item's continuation, not code.
+    if (INDENT_CODE_RE.test(src) && src.trim() !== "" &&
+        state.prev !== "para" && state.prev !== "quote" && !state.listCtx) {
+        return { type: "indent-code", classes: "fence-body indent-code" };
+    }
+    // A definition cannot interrupt a paragraph either.
+    if (state.prev !== "para" && LINKDEF_RE.test(src)) return { type: "linkdef", classes: "linkdef" };
+    const base = parseLineBlock(src);
+    if (base.type === "paragraph" && setext) {
+        return { type: "heading", classes: `heading h${setext} setext-heading` };
+    }
+    return base;
+}
+
+/** Advance the cross-line state past one line whose type is already known
+ *  (classifyLine with setext 0). Mutates and returns `state`. The ONE
+ *  definition of how state flows downward - _stateBefore and
+ *  _syncBlockState both walk with it. */
+function advanceState(state, text, type = classifyLine(text, state).type) {
+    if (type === "fence") state.inFence = fenceStep(text, state.inFence).open;
+    else if (type === "secret-open")  state.inSecret = true;
+    else if (type === "secret-close") state.inSecret = false;
+
+    const isList = type === "ul" || type === "ol" || type === "task";
+    if (isList) state.listCtx = true;
+    else if (type === "empty") { /* a blank line keeps the list open */ }
+    else if (!(state.listCtx && /^\s/.test(text))) state.listCtx = false;
+
+    state.prev = type === "empty" ? "blank"
+        : type === "paragraph" ? "para"
+        : type === "quote" ? "quote"
+        : isList ? "list"
+        : type === "indent-code" ? "code"
+        : "other";
     return state;
 }
 
-/** What a line's rendering depends on besides its own text. */
-function stateKey(state) {
-    return (state.inFence || "") + "|" + (state.inSecret ? "s" : "");
+/** What a line's rendering depends on besides its own text: the parts of
+ *  the state classifyLine reads, plus the setext level. */
+function stateKey(state, setext = 0) {
+    const prev = state.prev === "para" ? "p" : state.prev === "quote" ? "q" : "";
+    return `${state.inFence || ""}|${state.inSecret ? "s" : ""}|${prev}|${state.listCtx ? "l" : ""}|${setext || ""}`;
+}
+
+/** Collect a link reference definition into `defs` (first one wins, labels
+ *  normalised the way marked looks them up). */
+function addLinkDef(defs, src) {
+    const m = LINKDEF_RE.exec(src);
+    if (!m) return;
+    const label = m[1].trim().replace(/\s+/g, " ").toLowerCase();
+    if (!label || Object.prototype.hasOwnProperty.call(defs, label)) return;
+    const href = m[2].replace(/^<|>$/g, "");
+    const title = m[3] ? m[3].slice(1, -1) : null;
+    defs[label] = { href, title };
 }
 
 function parseLineBlock(src) {
@@ -1603,9 +1738,6 @@ function parseLineBlock(src) {
     if (/^\s*[-*+]\s+/.test(src))        return { type: "ul",    classes: "list ul" };
     if (/^\s*\d{1,9}[.)]\s+/.test(src))  return { type: "ol",    classes: "list ol" };
     if (/^>\s?/.test(src))          return { type: "quote", classes: "quote" };
-    if (/^(`{3,}|~{3,})/.test(src)) return { type: "fence", classes: "fence" };
-    if (/^:{2,3}secret(\s|$)/.test(src)) return { type: "secret-open",  classes: "secret-marker secret-open" };
-    if (/^:{2,3}end(\s|$)/.test(src))    return { type: "secret-close", classes: "secret-marker secret-close" };
     return { type: "paragraph", classes: "" };
 }
 
@@ -1633,7 +1765,7 @@ function parseLineBlock(src) {
 const PURIFY_CONFIG = {
     ALLOWED_TAGS: ["span", "strong", "em", "del", "code", "a", "br", "img"],
     ALLOWED_ATTR: ["class", "href", "target", "rel", "src", "alt", "title",
-                   "loading", "referrerpolicy"],
+                   "loading", "referrerpolicy", "data-glyph"],
     ALLOW_DATA_ATTR: false,
     KEEP_CONTENT: true,
 };
@@ -1643,7 +1775,9 @@ const SAFE_HREF_RE = /^(https?:|mailto:|#)/i;
 // javascript:, and anything else that could exfil or execute.
 const SAFE_IMG_SRC_RE = /^https?:/i;
 
-function renderInline(text) {
+/** `defs`: the document's link reference definitions ({ label: { href,
+ *  title } }), so [text][id], [text][] and [text] resolve. */
+function renderInline(text, defs = null) {
     if (!text) return "";
     // Graceful degradation if vendor scripts haven't loaded yet (e.g. in a
     // unit test harness that imports just the component file).
@@ -1652,9 +1786,55 @@ function renderInline(text) {
     }
     let tokens;
     try {
-        tokens = marked.Lexer.lexInline(text, { gfm: true, breaks: false });
+        if (defs && Object.keys(defs).length) {
+            const lexer = new marked.Lexer({ gfm: true, breaks: false });
+            lexer.tokens.links = defs;
+            tokens = lexer.inlineTokens(text);
+        } else {
+            tokens = marked.Lexer.lexInline(text, { gfm: true, breaks: false });
+        }
     } catch { return escapeHtml(text); }
     return DOMPurify.sanitize(walkInlineTokens(tokens), PURIFY_CONFIG);
+}
+
+// HTML entity: named, decimal or hex. Rendered as its character via CSS
+// generated content while the source stays in the DOM as a marker - the
+// line's textContent never changes.
+const ENTITY_RE = /&(?:#[0-9]{1,7}|#[xX][0-9a-fA-F]{1,6}|[A-Za-z][A-Za-z0-9]{1,31});/g;
+let entityDecoder = null;
+const entityCache = new Map();
+function decodeEntity(ent) {
+    let glyph = entityCache.get(ent);
+    if (glyph === undefined) {
+        glyph = decodeEntityUncached(ent);
+        if (entityCache.size < 512) entityCache.set(ent, glyph);
+    }
+    return glyph;
+}
+function decodeEntityUncached(ent) {
+    if (ent[1] === "#") {
+        const hex = ent[2] === "x" || ent[2] === "X";
+        const cp = parseInt(ent.slice(hex ? 3 : 2, -1), hex ? 16 : 10);
+        // CommonMark: 0 and invalid code points become U+FFFD.
+        if (!(cp > 0 && cp <= 0x10ffff) || (cp >= 0xd800 && cp <= 0xdfff)) return "\ufffd";
+        return String.fromCodePoint(cp);
+    }
+    // Named: let the HTML parser decode it. A <textarea> never runs markup.
+    if (!entityDecoder) entityDecoder = document.createElement("textarea");
+    entityDecoder.innerHTML = ent;
+    return entityDecoder.value;
+}
+function renderText(text) {
+    if (!text.includes("&")) return escapeHtml(text);
+    let out = "", last = 0;
+    for (const m of text.matchAll(ENTITY_RE)) {
+        const glyph = decodeEntity(m[0]);
+        if (glyph === m[0]) continue;             // unknown name: plain text
+        out += escapeHtml(text.slice(last, m.index)) +
+               `<span class="entity" data-glyph="${escapeAttr(glyph)}"><span class="marker">${escapeHtml(m[0])}</span></span>`;
+        last = m.index + m[0].length;
+    }
+    return out + escapeHtml(text.slice(last));
 }
 
 function walkInlineTokens(tokens) {
@@ -1666,7 +1846,7 @@ function walkInlineTokens(tokens) {
 function renderInlineToken(t) {
     switch (t.type) {
         case "text":
-            return escapeHtml(t.text);
+            return renderText(t.text);
         case "escape":
             // raw like "\\*" — keep the backslash visible as a marker so
             // textContent round-trips; show the escaped char as content.
@@ -1699,10 +1879,18 @@ function renderInlineToken(t) {
                 return `<a href="${escapeAttr(safe)}" target="_blank" rel="noopener noreferrer">${escapeHtml(t.raw)}</a>`;
             }
             // Inline link [label](href) — preserve the `](...)` tail literally.
-            const tailIdx = t.raw.lastIndexOf("](");
-            if (tailIdx < 0) return escapeHtml(t.raw);
-            const tail = t.raw.substring(tailIdx);
-            return `<span class="marker">[</span><a href="${escapeAttr(safe)}" target="_blank" rel="noopener noreferrer">${walkInlineTokens(t.tokens || [])}</a><span class="marker">${escapeHtml(tail)}</span>`;
+            // Reference link [label][id] / [label][] / [label]: the tail is
+            // `][id]`, `][]` or `]`. Either way "[" + label + tail must BE the
+            // raw source, or we render it as plain text rather than risk the
+            // textContent invariant.
+            const inlineIdx = t.raw.lastIndexOf("](");
+            const refIdx    = t.raw.lastIndexOf("][");
+            const tail = inlineIdx >= 0 ? t.raw.substring(inlineIdx)
+                : refIdx >= 0 ? t.raw.substring(refIdx)
+                : "]";
+            if ("[" + t.text + tail !== t.raw) return escapeHtml(t.raw);
+            const titleAttr = t.title ? ` title="${escapeAttr(t.title)}"` : "";
+            return `<span class="marker">[</span><a href="${escapeAttr(safe)}"${titleAttr} target="_blank" rel="noopener noreferrer">${walkInlineTokens(t.tokens || [])}</a><span class="marker">${escapeHtml(tail)}</span>`;
         }
         case "image": {
             // Preserve the raw source as a marker span (hidden on inactive
@@ -2041,6 +2229,49 @@ const TEMPLATE = `
         box-shadow: inset 1px 0 0 color-mix(in srgb, var(--fg, #fff) 8%, transparent),
                     inset -1px 0 0 color-mix(in srgb, var(--fg, #fff) 8%, transparent);
     }
+
+    /* Indented code (4 spaces / tab): the lines carry .fence-body, so they
+       get the code card above; with no fence lines around it, its own
+       first and last lines cap the card. */
+    .line.indent-code:not(.active) .block-marker { display: none; }
+    .line.indent-code:not(.line.indent-code + .line.indent-code) {
+        border-top-left-radius: var(--radius-m, 4px);
+        border-top-right-radius: var(--radius-m, 4px);
+        box-shadow: inset 0 1px 0 color-mix(in srgb, var(--fg, #fff) 8%, transparent),
+                    inset 1px 0 0 color-mix(in srgb, var(--fg, #fff) 8%, transparent),
+                    inset -1px 0 0 color-mix(in srgb, var(--fg, #fff) 8%, transparent);
+    }
+    .line.indent-code:not(:has(+ .line.indent-code)) {
+        border-bottom-left-radius: var(--radius-m, 4px);
+        border-bottom-right-radius: var(--radius-m, 4px);
+        box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--fg, #fff) 8%, transparent),
+                    inset 1px 0 0 color-mix(in srgb, var(--fg, #fff) 8%, transparent),
+                    inset -1px 0 0 color-mix(in srgb, var(--fg, #fff) 8%, transparent);
+    }
+    .line.indent-code:not(.line.indent-code + .line.indent-code):not(:has(+ .line.indent-code)) {
+        box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fg, #fff) 8%, transparent);
+    }
+
+    /* Setext underline (=== / --- under paragraph text): the paragraph
+       renders as the heading, the underline collapses to a sliver. */
+    .line.setext-underline:not(.active) {
+        min-height: 0;
+        height: 4px;
+        padding: 0;
+        overflow: hidden;
+    }
+    .line.setext-underline:not(.active) .block-marker { display: none; }
+    .line.setext-underline.active { color: var(--text-muted, #888); }
+
+    /* Link reference definition ([id]: url): metadata, not prose. */
+    .line.linkdef {
+        color: var(--text-muted, #888);
+        font-size: 0.85em;
+    }
+
+    /* HTML entity (&copy;): the source stays in the DOM as a marker
+       (hidden on inactive lines), the character is generated content. */
+    .line:not(.active) .entity::before { content: attr(data-glyph); }
 
     /* Active fence marker (user is editing the fence boundary line):
        dim the raw markers so they read as syntax, keep the card bg. */
