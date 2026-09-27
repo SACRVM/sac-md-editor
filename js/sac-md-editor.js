@@ -50,6 +50,18 @@
  *   Backspace at start of non-first line   merge with previous line
  *   Tab                                    two-space soft tab
  *
+ * Tables (GFM pipe tables): rendered as a real grid on inactive lines, raw
+ * source on the caret line. The toolbar's Table button inserts a 2-column
+ * table with the first header cell selected. Inside a table:
+ *   Tab / Shift+Tab                        next / previous cell, content
+ *                                          selected; past the last cell a
+ *                                          new row is added
+ *   Enter                                  new empty row below; on an empty
+ *                                          row it leaves the table
+ * Leaving a table (caret moves out, or focus leaves the editor) lines its
+ * pipes up again. That rewrites source text, so it is an edit: `input`
+ * fires and it is undoable.
+ *
  * :::secret / :::end blocks (fenced-div style, `:{2,3}` accepted on read):
  * lines between the boundaries get the .secret-body class and a CSS blur so
  * the content isn't readable over someone's shoulder. A reveal toggle (eye
@@ -122,6 +134,9 @@ function mdAddStrings() {
         "md-editor.quoteLabel":  "Zitat",
         "md-editor.hr":          "Trennlinie",
         "md-editor.hrLabel":     "Linie",
+        "md-editor.table":       "Tabelle",
+        "md-editor.tableLabel":  "Tabelle",
+        "md-editor.tableColumn": "Spalte",
         "md-editor.linkPrompt":  "Link-Adresse",
         "md-editor.linkText":    "Linktext",
         "md-editor.secret":      "Geheim",
@@ -144,6 +159,7 @@ const MD_TOOLBAR_TEXT = {
     ol:     ["ol",     "Numbered list",   "olLabel",    "1. List"],
     quote:  ["quote",  "Blockquote",      "quoteLabel", "Quote"],
     hr:     ["hr",     "Horizontal rule", "hrLabel",    "HR"],
+    table:  ["table",  "Table",           "tableLabel", "Table"],
 };
 
 class SacMdEditor extends HTMLElement {
@@ -362,17 +378,17 @@ class SacMdEditor extends HTMLElement {
      *  the cross-line trackers: inFence (``` / ~~~ group - the opening run) and inSecret (:::secret
      *  group) — each must advance on every line even when rendering wouldn't
      *  otherwise change the output. */
-    _renderLine(line, src = null, state = null, setext) {
+    _renderLine(line, src = null, state = null, ahead) {
         if (src === null) src = line.textContent;
 
         // No state passed = unknown context: render as a top-of-document
         // line and leave the key unset, so the next sweep redoes it.
         const known = !!state;
         if (!state) state = freshState();
-        if (setext === undefined) setext = known ? this._setextAfter(line, state, src) : 0;
-        const block = classifyLine(src, state, setext);
+        if (ahead === undefined) ahead = known ? this._aheadFor(line, state, src) : NO_AHEAD;
+        const block = classifyLine(src, state, ahead);
         // Remember what this render assumed, for _syncBlockState.
-        line._blockState = known ? this._lineKey(state, setext, src) : undefined;
+        line._blockState = known ? this._lineKey(state, ahead, src) : undefined;
         advanceState(state, src, classifyLine(src, state).type);
 
         line.classList.remove("active");
@@ -447,6 +463,10 @@ class SacMdEditor extends HTMLElement {
             line.innerHTML = `<span class="secret-body-text">${inner}</span>`;
             return;
         }
+        if (TABLE_TYPES.has(blockType)) {
+            line.innerHTML = renderTableRow(src, blockType, block.aligns, defs);
+            return;
+        }
         if (blockType === "indent-code") {
             // The 4-space / tab indent is syntax, not code: a marker, hidden
             // on inactive lines, so the card shows the code flush.
@@ -489,31 +509,35 @@ class SacMdEditor extends HTMLElement {
     _applyBlockClassFor(line, src = null) {
         if (src === null) src = line.textContent;
         const state = this._stateBefore(line);
-        const setext = this._setextAfter(line, state, src);
-        line._blockState = this._lineKey(state, setext, src);
-        this._applyBlockClass(line, src, classifyLine(src, state, setext));
+        const ahead = this._aheadFor(line, state, src);
+        line._blockState = this._lineKey(state, ahead, src);
+        this._applyBlockClass(line, src, classifyLine(src, state, ahead));
     }
 
     /** The sweep key for a line: its state, its setext level and - for a
      *  line that could hold a reference link - the link definitions. */
-    _lineKey(state, setext, src) {
-        return stateKey(state, setext) + (src.includes("]") ? "|" + (this._linkDefsKey || "") : "");
+    _lineKey(state, ahead, src) {
+        return stateKey(state, ahead) + (src.includes("]") ? "|" + (this._linkDefsKey || "") : "");
     }
 
-    /** Setext lookahead for ONE line (the single-line edit paths; the sweep
-     *  computes all levels in one backward pass instead). A paragraph line
-     *  is a heading when the paragraph it belongs to ends in an underline. */
-    _setextAfter(line, state, src) {
-        if (classifyLine(src, state).type !== "paragraph") return 0;
+    /** Lookahead for ONE line (the single-line edit paths; the sweep
+     *  computes it for all lines in one backward pass instead). A paragraph
+     *  line is a table header when the next line is a matching delimiter
+     *  row, and a setext heading when its paragraph ends in an underline. */
+    _aheadFor(line, state, src) {
+        if (classifyLine(src, state).type !== "paragraph") return NO_AHEAD;
         const st = advanceState({ ...state }, src, "paragraph");
+        let first = true;
         for (let cur = line.nextElementSibling; cur; cur = cur.nextElementSibling) {
             const text = cur.textContent;
             const type = classifyLine(text, st).type;
-            if (type === "setext") return text.trim()[0] === "=" ? 1 : 2;
-            if (type !== "paragraph") return 0;
+            if (first && type === "table-delim") return { setext: 0, table: delimAligns(text) };
+            first = false;
+            if (type === "setext") return { setext: text.trim()[0] === "=" ? 1 : 2, table: "" };
+            if (type !== "paragraph") return NO_AHEAD;
             advanceState(st, text, type);
         }
-        return 0;
+        return NO_AHEAD;
     }
 
     /** Recompute the line's block-level class without touching its inner DOM.
@@ -597,7 +621,14 @@ class SacMdEditor extends HTMLElement {
         }
 
         if (newActive === this._activeLine) return;
+        const left = this._activeLine;
         this._activeLine = newActive;
+        // Leaving a table (not just moving between its rows) tidies it:
+        // the pipes line up again.
+        if (left && left.isConnected && TABLE_TYPES.has(left.dataset.block) &&
+            !(newActive && this._tableBlock(left).includes(newActive))) {
+            this._formatTableAt(left);
+        }
         if (newActive) this._flattenLine(newActive);
     }
 
@@ -829,6 +860,9 @@ class SacMdEditor extends HTMLElement {
 
         if (e.key === "Enter" && !e.shiftKey && !(e.ctrlKey || e.metaKey)) {
             e.preventDefault();
+            // In a table Enter adds a row - it must not delete a selected
+            // cell (Tab selects the cell it moves to).
+            if (this._inTable()) { this._tableEnter(); return; }
             // Enter over a selection: delete the selection first (could span
             // multiple lines), then split at the now-collapsed caret. The
             // beforeinput listener is skipped for Enter because we
@@ -843,6 +877,7 @@ class SacMdEditor extends HTMLElement {
         }
         if (e.key === "Tab") {
             e.preventDefault();
+            if (this._inTable()) { this._tableTab(e.shiftKey); return; }
             // Tab with a selection: replace the selection with a tab stop
             // instead of expanding it.
             this._deleteSelection();
@@ -873,6 +908,7 @@ class SacMdEditor extends HTMLElement {
         // doesn't mask the lines below until every subsequent line is re-
         // classified with the new inSecret state. Doing it on blur is cheap
         // and guarantees the "resting" view is always correct.
+        if (this._inTable()) this._formatTableAt(this._activeLine);
         this._renderAllInactive();
         // Drop the multi-line selection band too. The `:focus-within` CSS
         // already hides it, but clearing the class means the DOM is clean
@@ -1078,6 +1114,7 @@ class SacMdEditor extends HTMLElement {
             case "ol":     return this._togglePrefixMulti("1. ");
             case "quote":  return this._togglePrefixMulti("> ");
             case "hr":     return this._insertHr(line);
+            case "table":  return this._insertTable(line);
             case "code": {
                 const selectedLines = this._getSelectedLines();
                 if (selectedLines.length > 1) return this._wrapAsCodeFence(selectedLines);
@@ -1250,6 +1287,155 @@ class SacMdEditor extends HTMLElement {
         this._applyBlockClassFor(line, next);
         const delta = has ? -prefix.length : prefix.length;
         this._placeCaretInLine(line, Math.max(0, caret + delta));
+        this._dirty = true;
+        this.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+
+    // -----------------------------------------------------------------------
+    // Tables
+    // -----------------------------------------------------------------------
+
+    _inTable() {
+        return !!(this._activeLine && TABLE_TYPES.has(this._activeLine.dataset.block));
+    }
+
+    /** The table block around a table line: header, delimiter, rows. */
+    _tableBlock(line) {
+        let first = line;
+        while (first.previousElementSibling && TABLE_TYPES.has(first.previousElementSibling.dataset.block) &&
+               first.dataset.block !== "table-head") {
+            first = first.previousElementSibling;
+        }
+        const rows = [first];
+        for (let cur = first.nextElementSibling; cur && (cur.dataset.block === "table-delim" ||
+             cur.dataset.block === "table-row"); cur = cur.nextElementSibling) rows.push(cur);
+        return rows;
+    }
+
+    /** Make `target` the active (raw) line and put the caret, or a
+     *  selection, in it. The old active line renders back first. */
+    _activateLine(target, start, end = start) {
+        const old = this._activeLine;
+        if (old && old !== target && old.isConnected) this._renderLine(old, null, this._stateBefore(old));
+        target.replaceChildren(document.createTextNode(target.textContent));
+        target.classList.add("active");
+        this._activeLine = target;
+        this._applyBlockClassFor(target);
+        if (end === start) this._placeCaretInLine(target, start);
+        else this._selectInLine(target, start, end);
+    }
+
+    /** Line up the pipes of the table around `line`. Rewrites only lines
+     *  whose text changes; an edit like any other (input event, undoable). */
+    _formatTableAt(line) {
+        const rows = this._tableBlock(line);
+        if (rows.length < 2 || rows[0].dataset.block !== "table-head") return;
+        const texts = rows.map((l) => l.textContent);
+        const next  = formatTable(texts);
+        let changed = false;
+        rows.forEach((l, i) => {
+            if (next[i] === texts[i]) return;
+            changed = true;
+            if (l === this._activeLine) l.replaceChildren(document.createTextNode(next[i]));
+            else l.textContent = next[i];
+            l._blockState = undefined;
+        });
+        if (!changed) return;
+        this._dirty = true;
+        this.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+
+    /** Tab / Shift+Tab: next / previous cell, selecting its content; past
+     *  the last cell of the last row a new row is added. The delimiter row
+     *  is skipped. */
+    _tableTab(back) {
+        const line  = this._activeLine;
+        const rows  = this._tableBlock(line).filter((l) => l.dataset.block !== "table-delim");
+        const cellsOf = (text) => splitTableRow(text).filter((g) => g.kind === "cell");
+        const caret = this._caretOffsetInLine(line) ?? 0;
+        const cells = cellsOf(line.textContent);
+        // The cell the caret is in: the last one starting at or before it
+        // (its leading padding counts as inside).
+        let idx = 0;
+        cells.forEach((c, i) => { if (c.start - 1 <= caret) idx = i; });
+        let row = rows.indexOf(line);
+        if (row < 0) row = 0;            // on the delimiter row: treat as header
+        let target = idx + (back ? -1 : 1);
+        if (target < 0 || target >= cells.length) {
+            row += back ? -1 : 1;
+            if (row < 0) return;
+            if (row >= rows.length) {
+                this._tableAddRow(rows[rows.length - 1]);
+                return;
+            }
+            const len = cellsOf(rows[row].textContent).length;
+            target = back ? len - 1 : 0;
+        }
+        const dest = cellsOf(rows[row].textContent)[target];
+        if (!dest) return;
+        this._activateLine(rows[row], dest.start, dest.start + dest.text.length);
+    }
+
+    /** Enter in a table: a new empty row below (below the delimiter when
+     *  on the header). Enter on an empty row leaves the table, like an
+     *  empty list item leaves a list. */
+    _tableEnter() {
+        const line = this._activeLine;
+        const type = line.dataset.block;
+        if (type === "table-row" && tableCells(line.textContent).every((c) => c === "")) {
+            const above = line.previousElementSibling;
+            line.replaceChildren(document.createTextNode(""));
+            this._applyBlockClassFor(line, "");
+            this._placeCaretInLine(line, 0);
+            if (above && TABLE_TYPES.has(above.dataset.block)) this._formatTableAt(above);
+            this._dirty = true;
+            this.dispatchEvent(new Event("input", { bubbles: true }));
+            return;
+        }
+        const anchor = type === "table-head" && line.nextElementSibling ? line.nextElementSibling : line;
+        this._tableAddRow(anchor);
+    }
+
+    /** Insert an empty row after `anchor` and put the caret in its first cell. */
+    _tableAddRow(anchor) {
+        const n = tableCells(this._tableBlock(anchor)[0].textContent).length;
+        const row = document.createElement("div");
+        row.className = "line";
+        row.textContent = "|" + "  |".repeat(n);
+        anchor.after(row);
+        this._activateLine(row, 2);
+        this._dirty = true;
+        this.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+
+    /** Toolbar: a 2-column table with one empty row, header cell selected. */
+    _insertTable(line) {
+        const col = mdT("tableColumn", "Column");
+        const texts = formatTable([`| ${col} 1 | ${col} 2 |`, "| --- | --- |", "|  |  |"]);
+        let first;
+        if (line.textContent === "") {
+            first = line;
+            line.textContent = texts[0];
+        } else {
+            // A table after text needs its own block: a blank line first.
+            const blank = document.createElement("div");
+            blank.className = "line";
+            line.after(blank);
+            first = document.createElement("div");
+            first.className = "line";
+            first.textContent = texts[0];
+            blank.after(first);
+        }
+        let prev = first;
+        for (const t of texts.slice(1)) {
+            const l = document.createElement("div");
+            l.className = "line";
+            l.textContent = t;
+            prev.after(l);
+            prev = l;
+        }
+        const head = splitTableRow(texts[0]).find((g) => g.kind === "cell");
+        this._activateLine(first, head.start, head.start + head.text.length);
         this._dirty = true;
         this.dispatchEvent(new Event("input", { bubbles: true }));
     }
@@ -1555,12 +1741,17 @@ class SacMdEditor extends HTMLElement {
             advanceState(state, text, type);
         }
         // Pass 2, bottom-up: which paragraph lines an underline turns into a
-        // setext heading (the whole paragraph above it, like CommonMark).
-        const setext = new Array(lines.length).fill(0);
+        // setext heading (the whole paragraph above it, like CommonMark),
+        // and which are table headers.
+        // A paragraph line directly above a delimiter row is a table header.
+        const ahead = new Array(lines.length).fill(NO_AHEAD);
         let carry = 0;
         for (let i = lines.length - 1; i >= 0; i--) {
             if (types[i] === "setext") carry = texts[i].trim()[0] === "=" ? 1 : 2;
-            else if (types[i] === "paragraph") setext[i] = carry;
+            else if (types[i] === "paragraph") {
+                if (types[i + 1] === "table-delim") { ahead[i] = { setext: 0, table: delimAligns(texts[i + 1]) }; carry = 0; }
+                else if (carry) ahead[i] = { setext: carry, table: "" };
+            }
             else carry = 0;
         }
         this._linkDefs = defs;
@@ -1568,12 +1759,12 @@ class SacMdEditor extends HTMLElement {
         // Pass 3: re-render exactly the lines whose context changed.
         for (let i = 0; i < lines.length; i++) {
             const line = lines[i];
-            if (line._blockState === this._lineKey(states[i], setext[i], texts[i])) continue;
+            if (line._blockState === this._lineKey(states[i], ahead[i], texts[i])) continue;
             if (line === this._activeLine) {
-                line._blockState = this._lineKey(states[i], setext[i], texts[i]);
-                this._applyBlockClass(line, texts[i], classifyLine(texts[i], states[i], setext[i]));
+                line._blockState = this._lineKey(states[i], ahead[i], texts[i]);
+                this._applyBlockClass(line, texts[i], classifyLine(texts[i], states[i], ahead[i]));
             } else {
-                this._renderLine(line, texts[i], { ...states[i] }, setext[i]);
+                this._renderLine(line, texts[i], { ...states[i] }, ahead[i]);
             }
         }
     }
@@ -1636,21 +1827,124 @@ const INDENT_CODE_RE = /^( {4}|\t)/;
 // Link reference definition: [label]: url "optional title".
 const LINKDEF_RE = /^ {0,3}\[([^\]]+)\]:[ \t]*(<[^>]*>|\S+)(?:[ \t]+("[^"]*"|'[^']*'|\([^)]*\)))?[ \t]*$/;
 
+// GFM table delimiter row: cells of dashes with optional alignment colons.
+const TABLE_DELIM_RE = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
+const TABLE_TYPES = new Set(["table-head", "table-delim", "table-row"]);
+
+/** Split a table row into segments that cover `src` exactly, in order:
+ *  { kind: "pipe" | "ws" | "cell", text, start }. Pipes escaped with a
+ *  backslash do not split (GFM). A leading or trailing blank segment is
+ *  padding, not a cell. Rendering and formatting both use this, so the
+ *  two can never disagree about where a cell is. */
+function splitTableRow(src) {
+    const pipes = [];
+    for (let i = 0; i < src.length; i++) {
+        if (src[i] === "\\") { i++; continue; }
+        if (src[i] === "|") pipes.push(i);
+    }
+    const out = [];
+    let start = 0;
+    for (let k = 0; k <= pipes.length; k++) {
+        const end  = k < pipes.length ? pipes[k] : src.length;
+        const part = src.slice(start, end);
+        const edge = k === 0 || k === pipes.length;
+        if (edge && part.trim() === "") {
+            if (part) out.push({ kind: "ws", text: part, start });
+        } else {
+            const lead  = /^\s*/.exec(part)[0];
+            const body  = part.slice(lead.length).replace(/\s+$/, "");
+            const trail = part.slice(lead.length + body.length);
+            if (lead)  out.push({ kind: "ws", text: lead, start });
+            // An empty cell's caret spot is one space in, not against the
+            // closing pipe, so typing there reads "| x |".
+            const at = body ? start + lead.length : start + Math.min(1, lead.length);
+            out.push({ kind: "cell", text: body, start: at });
+            if (trail) out.push({ kind: "ws", text: trail, start: start + lead.length + body.length });
+        }
+        if (k < pipes.length) out.push({ kind: "pipe", text: "|", start: end });
+        start = end + 1;
+    }
+    return out;
+}
+const tableCells = (src) => splitTableRow(src).filter((g) => g.kind === "cell").map((g) => g.text);
+
+/** Column alignments from a delimiter row: one char per column,
+ *  l / c / r, or "-" for none. */
+function delimAligns(src) {
+    return tableCells(src).map((c) => {
+        const l = c.startsWith(":"), r = c.endsWith(":");
+        return l && r ? "c" : r ? "r" : l ? "l" : "-";
+    }).join("");
+}
+
+/** Pretty-print a table block (header, delimiter, rows) so the pipes line
+ *  up: every cell padded to its column's width, delimiter dashes to match,
+ *  alignment colons kept. Cells beyond the header's count are kept
+ *  verbatim at the end of their row - formatting never drops content.
+ *  Returns the new line texts, same length as `texts`. */
+function formatTable(texts) {
+    const rows   = texts.map(tableCells);
+    const n      = rows[0].length;
+    const aligns = delimAligns(texts[1]);
+    const width  = Array.from({ length: n }, (_, c) =>
+        Math.max(3, ...rows.map((r, i) => (i === 1 ? 0 : (r[c] || "").length))));
+    const pad = (t, w, a) => {
+        const gap = w - t.length;
+        if (a === "r") return " ".repeat(gap) + t;
+        if (a === "c") return " ".repeat(Math.floor(gap / 2)) + t + " ".repeat(Math.ceil(gap / 2));
+        return t + " ".repeat(gap);
+    };
+    return rows.map((r, i) => {
+        if (i === 1) {
+            return "| " + width.map((w, c) => {
+                const a = aligns[c] || "-";
+                const dashes = "-".repeat(w - (a === "c" ? 2 : a === "-" ? 0 : 1));
+                return a === "c" ? ":" + dashes + ":" : a === "l" ? ":" + dashes : a === "r" ? dashes + ":" : dashes;
+            }).join(" | ") + " |";
+        }
+        const cells = width.map((w, c) => pad(r[c] || "", w, aligns[c]));
+        return "| " + cells.concat(r.slice(n)).join(" | ") + " |";
+    });
+}
+
+/** Render a table line: pipes and padding become hidden markers, each cell
+ *  a .tcell (CSS display: table-cell). The line itself is display:
+ *  table-row, so consecutive rows form one anonymous table and the columns
+ *  line up with no measuring. textContent stays the source. */
+function renderTableRow(src, kind, aligns, defs) {
+    let col = 0;
+    return splitTableRow(src).map((g) => {
+        if (g.kind !== "cell") return `<span class="block-marker">${escapeHtml(g.text)}</span>`;
+        const a = (aligns && aligns[col++]) || "-";
+        if (kind === "table-delim") {
+            return `<span class="tcell tdelim"><span class="block-marker">${escapeHtml(g.text)}</span></span>`;
+        }
+        return `<span class="tcell ta-${a}">${renderInline(g.text, defs)}</span>`;
+    }).join("");
+}
+
 /** Cross-line state at the top of a document. inFence / inSecret as
  *  before; `prev` is what the previous line was ("blank", "para",
  *  "quote", "list", "code", "other") and `listCtx` whether a list is still
- *  open (a blank line keeps it, an unindented non-list line ends it). */
+ *  open (a blank line keeps it, an unindented non-list line ends it).
+ *  `table` is the open table's alignments ("" outside one) and `pipeCols`
+ *  the cell count of the line above if it could be a table header. */
 function freshState() {
-    return { inFence: false, inSecret: false, prev: "blank", listCtx: false };
+    return { inFence: false, inSecret: false, prev: "blank", listCtx: false, table: "", pipeCols: 0 };
 }
+
+// Lookahead facts about a line: its setext level and, for a table header,
+// the alignments of the delimiter row below it.
+const NO_AHEAD = Object.freeze({ setext: 0, table: "" });
 
 /** THE line classifier. Everything that decides what a line is lives here:
  *  fences first (inside one nothing else counts), then :::secret bounds,
  *  secret bodies, setext underlines, indented code, link definitions and
- *  finally the single-line syntax (parseLineBlock). `setext` is the level
- *  (1/2) when this line belongs to a paragraph that an underline below
- *  turns into a heading - it comes from lookahead, never from `state`. */
-function classifyLine(src, state, setext = 0) {
+ *  finally the single-line syntax (parseLineBlock). `ahead` carries what
+ *  only the lines BELOW can tell: the setext level (1/2) when an underline
+ *  turns this paragraph into a heading, and the table alignments when a
+ *  delimiter row makes it a table header. Never part of `state`. */
+function classifyLine(src, state, ahead = NO_AHEAD) {
     const fence = fenceStep(src, state.inFence);
     if (state.inFence) {
         return fence.boundary ? { type: "fence", classes: "fence" }
@@ -1660,6 +1954,15 @@ function classifyLine(src, state, setext = 0) {
     if (/^:{2,3}secret(\s|$)/.test(src)) return { type: "secret-open",  classes: "secret-marker secret-open" };
     if (/^:{2,3}end(\s|$)/.test(src))    return { type: "secret-close", classes: "secret-marker secret-close" };
     if (state.inSecret) return { type: "secret-body", classes: "secret-body" };
+    // Tables (GFM): body rows continue while lines hold a pipe and start no
+    // other block; the delimiter row must match the header's cell count.
+    const hasPipe = src.includes("|");
+    if (state.table && hasPipe && parseLineBlock(src).type === "paragraph") {
+        return { type: "table-row", classes: "table-row", aligns: state.table };
+    }
+    if (state.pipeCols && hasPipe && TABLE_DELIM_RE.test(src) && tableCells(src).length === state.pipeCols) {
+        return { type: "table-delim", classes: "table-delim", aligns: delimAligns(src) };
+    }
     // An underline only counts directly under paragraph text.
     if (state.prev === "para" && SETEXT_RE.test(src)) {
         const level = src.trim()[0] === "=" ? 1 : 2;
@@ -1674,8 +1977,11 @@ function classifyLine(src, state, setext = 0) {
     // A definition cannot interrupt a paragraph either.
     if (state.prev !== "para" && LINKDEF_RE.test(src)) return { type: "linkdef", classes: "linkdef" };
     const base = parseLineBlock(src);
-    if (base.type === "paragraph" && setext) {
-        return { type: "heading", classes: `heading h${setext} setext-heading` };
+    if (base.type === "paragraph" && ahead.table) {
+        return { type: "table-head", classes: "table-head", aligns: ahead.table };
+    }
+    if (base.type === "paragraph" && ahead.setext) {
+        return { type: "heading", classes: `heading h${ahead.setext} setext-heading` };
     }
     return base;
 }
@@ -1694,6 +2000,10 @@ function advanceState(state, text, type = classifyLine(text, state).type) {
     else if (type === "empty") { /* a blank line keeps the list open */ }
     else if (!(state.listCtx && /^\s/.test(text))) state.listCtx = false;
 
+    state.table = type === "table-delim" ? delimAligns(text)
+        : type === "table-row" ? state.table : "";
+    state.pipeCols = type === "paragraph" && text.includes("|") ? tableCells(text).length : 0;
+
     state.prev = type === "empty" ? "blank"
         : type === "paragraph" ? "para"
         : type === "quote" ? "quote"
@@ -1704,10 +2014,11 @@ function advanceState(state, text, type = classifyLine(text, state).type) {
 }
 
 /** What a line's rendering depends on besides its own text: the parts of
- *  the state classifyLine reads, plus the setext level. */
-function stateKey(state, setext = 0) {
+ *  the state classifyLine reads, plus the lookahead facts. */
+function stateKey(state, ahead = NO_AHEAD) {
     const prev = state.prev === "para" ? "p" : state.prev === "quote" ? "q" : "";
-    return `${state.inFence || ""}|${state.inSecret ? "s" : ""}|${prev}|${state.listCtx ? "l" : ""}|${setext || ""}`;
+    return `${state.inFence || ""}|${state.inSecret ? "s" : ""}|${prev}|${state.listCtx ? "l" : ""}` +
+           `|${state.table}|${state.pipeCols || ""}|${ahead.setext || ""}|${ahead.table}`;
 }
 
 /** Collect a link reference definition into `defs` (first one wins, labels
@@ -2269,6 +2580,30 @@ const TEMPLATE = `
         font-size: 0.85em;
     }
 
+    /* Tables: every row line is a table-row, so consecutive rows form
+       one anonymous CSS table and the columns align by themselves. Pipes
+       and padding are hidden markers; the active row shows its raw
+       source like every other line. */
+    .line.table-head:not(.active),
+    .line.table-row:not(.active),
+    .line.table-delim:not(.active) { display: table-row; }
+    .line.table-head:not(.active) .block-marker,
+    .line.table-row:not(.active) .block-marker,
+    .line.table-delim:not(.active) .block-marker { display: none; }
+    .line .tcell {
+        display: table-cell;
+        padding: 4px 12px;
+        border-bottom: 1px solid var(--border, color-mix(in srgb, var(--fg, #fff) 12%, transparent));
+    }
+    .line.table-head .tcell { font-weight: 600; }
+    .line.table-delim .tcell {
+        padding: 0;
+        height: 0;
+        border-bottom-width: 2px;
+    }
+    .line .tcell.ta-c { text-align: center; }
+    .line .tcell.ta-r { text-align: right; }
+
     /* HTML entity (&copy;): the source stays in the DOM as a marker
        (hidden on inactive lines), the character is generated content. */
     .line:not(.active) .entity::before { content: attr(data-glyph); }
@@ -2519,6 +2854,7 @@ const TEMPLATE = `
     <button type="button" data-fmt="ol"     title="Numbered list">1. List</button>
     <button type="button" data-fmt="quote"  title="Blockquote">Quote</button>
     <button type="button" data-fmt="hr"     title="Horizontal rule">HR</button>
+    <button type="button" data-fmt="table"  title="Table">Table</button>
 </div>
 <div class="editor" part="editor" contenteditable="plaintext-only" spellcheck="true"></div>
 `;

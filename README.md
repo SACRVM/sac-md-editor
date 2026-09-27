@@ -32,7 +32,7 @@ npx serve .        # http://localhost:3000 — the root page is the demo
 | Property | `value` — the markdown source (getter + setter) |
 | Events | `input` (every edit), `change` (focus leaves after an edit) |
 | Methods | `focus()` |
-| Keyboard | Ctrl/Cmd+B/I/K · Enter continues lists · Tab soft-tabs · Backspace merges lines |
+| Keyboard | Ctrl/Cmd+B/I/K · Enter continues lists · Tab soft-tabs · Backspace merges lines · in a table: Tab / Shift+Tab move between cells, Enter adds a row |
 | Language | Follows the page language through the kit's `sac.t` / `sac.lang`, relabelled live; ships German, keys `md-editor.*` |
 
 The editor's own strings (toolbar, reveal toggle, link prompt, the
