@@ -39,8 +39,10 @@ even if it looks right on screen. When reviewing a patch, check this first.
 - **Cross-line state**: a single forward scan tracks `inFence` (``` / ~~~ groups;
   holds the opening run, since only the same character at least as long closes)
   and `inSecret`. Fence-awareness is load-bearing: `:::secret` inside a code
-  fence is text, not a boundary. Editing a line re-scans forward because one
-  keystroke can flip the state of everything below (type ``` on a line).
+  fence is text, not a boundary. Every edit ends in `_syncBlockState()`, because
+  one keystroke can flip the state of everything below (type ``` on a line):
+  each line remembers the state it was rendered with, and the sweep
+  re-renders only the lines whose state changed.
 - **Masked blocks**: `:::secret` … `:::end` bodies get `.secret-body` + CSS
   blur; an eye toggle (contenteditable=false, one-line SVG so no stray text
   nodes break the round-trip) sits on the boundary line and flips

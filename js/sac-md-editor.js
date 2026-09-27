@@ -297,7 +297,10 @@ class SacMdEditor extends HTMLElement {
         // that bubble up from the internal contenteditable AND the synthetic
         // input events we dispatch from structural edits (toolbar, paste,
         // splitAt, etc.). One listener covers both paths.
-        this.addEventListener("input", () => this._scheduleHistorySnapshot());
+        this.addEventListener("input", () => {
+            this._syncBlockState();
+            this._scheduleHistorySnapshot();
+        });
 
         this._editor.addEventListener("input",       (e) => this._handleInput(e));
         this._editor.addEventListener("beforeinput", (e) => this._handleBeforeInput(e));
@@ -353,6 +356,9 @@ class SacMdEditor extends HTMLElement {
     _renderLine(line, src = null, state = null) {
         if (src === null) src = line.textContent;
 
+        // Remember what this render assumed, for _syncBlockState. No state
+        // passed = unknown, so the next sweep re-renders it properly.
+        line._blockState = state ? stateKey(state) : undefined;
         const insideFenceNow = state ? state.inFence : false;
         const fence = fenceStep(src, insideFenceNow);
         const isFenceBoundary = fence.boundary;
@@ -468,6 +474,7 @@ class SacMdEditor extends HTMLElement {
     _applyBlockClassFor(line, src = null) {
         if (src === null) src = line.textContent;
         const state = this._stateBefore(line);
+        line._blockState = stateKey(state);
         const isFenceBoundary = fenceStep(src, state.inFence).boundary;
         const isSecretBoundary = !state.inFence &&
             (/^:{2,3}secret(\s|$)/.test(src) || /^:{2,3}end(\s|$)/.test(src));
@@ -865,6 +872,13 @@ class SacMdEditor extends HTMLElement {
         // the current line and continue it on the new line with the same
         // marker (ordered: next number, same delimiter), unless the current
         // prefix is all we had (empty item) - in which case exit the list.
+        // Inside a code fence `- ` and `> ` are code, not structure: a plain
+        // split, no continuation.
+        if (line.dataset.block === "fence-body") {
+            this._splitAt(line, before, after, 0);
+            return;
+        }
+
         const listMatch = before.match(/^(\s*)([-*+]|(\d{1,9})([.)]))\s+(.*)$/);
         if (listMatch) {
             const [, indent, marker, numStr, delim, content] = listMatch;
@@ -1482,15 +1496,28 @@ class SacMdEditor extends HTMLElement {
         const state = { inFence: false, inSecret: false };
         for (const sib of Array.from(this._editor.children)) {
             if (sib === line) return state;
-            const text = sib.textContent;
-            const fence = fenceStep(text, state.inFence);
-            state.inFence = fence.open;
-            if (!fence.boundary && !state.inFence) {
-                if (/^:{2,3}secret(\s|$)/.test(text)) state.inSecret = true;
-                else if (/^:{2,3}end(\s|$)/.test(text)) state.inSecret = false;
-            }
+            advanceState(state, sib.textContent);
         }
         return state;
+    }
+
+    /** Cross-line consistency sweep, run after every edit. A keystroke can
+     *  change the state of every line below it (type ``` or :::secret on a
+     *  line), but the edit paths only re-render the line they touch. Each
+     *  line remembers the state it was rendered with (_blockState); this
+     *  walks the document once and re-renders exactly the lines whose state
+     *  no longer matches. Typing plain text changes no state, so the walk
+     *  re-renders nothing - one regex pass per line. */
+    _syncBlockState() {
+        if (!this._editor) return;
+        const state = { inFence: false, inSecret: false };
+        for (const line of Array.from(this._editor.children)) {
+            if (line._blockState !== stateKey(state)) {
+                if (line === this._activeLine) this._applyBlockClassFor(line);
+                else this._renderLine(line, null, { ...state });
+            }
+            advanceState(state, line.textContent);
+        }
     }
 
     /** Reveal-toggle click handler. Finds the bounded block from the :::secret
@@ -1539,6 +1566,25 @@ function fenceStep(src, open) {
     const m = /^(`{3,}|~{3,})[ \t]*$/.exec(src);
     if (m && m[1][0] === open[0] && m[1].length >= open.length) return { boundary: true, open: false };
     return { boundary: false, open };
+}
+
+/** Advance the cross-line state past one line: fences first (inside a fence
+ *  nothing else counts), then :::secret / :::end outside fences. Mutates
+ *  and returns `state`. The ONE definition of how state flows downward -
+ *  _stateBefore and _syncBlockState both walk with it. */
+function advanceState(state, text) {
+    const fence = fenceStep(text, state.inFence);
+    state.inFence = fence.open;
+    if (!fence.boundary && !state.inFence) {
+        if (/^:{2,3}secret(\s|$)/.test(text)) state.inSecret = true;
+        else if (/^:{2,3}end(\s|$)/.test(text)) state.inSecret = false;
+    }
+    return state;
+}
+
+/** What a line's rendering depends on besides its own text. */
+function stateKey(state) {
+    return (state.inFence || "") + "|" + (state.inSecret ? "s" : "");
 }
 
 function parseLineBlock(src) {
@@ -2149,7 +2195,10 @@ const TEMPLATE = `
         display: inline-block;
         width: 14px;
         height: 14px;
-        vertical-align: -3px;
+        /* middle, not a pixel offset: the box's own text is font-size 0,
+           so its baseline sits at the TOP of the box and any baseline
+           offset hangs the whole box below the text line. */
+        vertical-align: middle;
         border: 1.5px solid var(--border, color-mix(in srgb, var(--fg, #fff) 30%, transparent));
         border-radius: var(--radius-s, 2px);
         position: relative;
@@ -2167,6 +2216,8 @@ const TEMPLATE = `
         font-size: inherit;
         vertical-align: baseline;
     }
+    /* The hidden gap marker leaves the box touching the text. */
+    .line.task:not(.active) .task-box { margin-right: 6px; }
     .line.task .task-box.checked {
         background: var(--accent, #3b82f6);
         border-color: var(--accent, #3b82f6);
