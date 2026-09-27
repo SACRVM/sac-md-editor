@@ -62,27 +62,42 @@
  * pipes up again. That rewrites source text, so it is an edit: `input`
  * fires and it is undoable.
  *
- * :::secret / :::end blocks (fenced-div style, `:{2,3}` accepted on read):
- * lines between the boundaries get the .secret-body class and a CSS blur so
- * the content isn't readable over someone's shoulder. A reveal toggle (eye
- * icon, contenteditable=false) sits on the :::secret boundary line —
- * clicking it flips .secret-revealed on every line of the block for
- * session-only unmasking. The active (caret) line inside a secret block
- * still flattens to raw text for editing.
+ * Bounded blocks (registry): the editor knows no block names of its own. A
+ * host registers them, once per page, on the element class:
  *
- * SECURITY: this is a purely VISUAL layer. The plaintext stays in the DOM
- * and in whatever the host saves from `value`. Masking is a courtesy
- * against shoulder-surfing, never a security boundary — a host that needs
- * secrets kept from an index, an agent or a wire has to enforce that
- * server-side (the upstream app strips these blocks on every machine-facing
- * path; see the README). Do not build on the blur.
+ *   const Editor = customElements.get("sac-md-editor");
+ *   const off = Editor.registerBlock({
+ *       name:      "spoiler",                 // a-z 0-9 -, unique
+ *       open:      /^:::spoiler(\s|$)/,       // opening line, and
+ *       close:     /^:::end(\s|$)/,           // closing line - or instead:
+ *       match:     (src) => "open" | "close" | "line" | null,
+ *       masked:    true,     // body lines blurred until revealed
+ *       toggle:    true,     // eye button on the opening line
+ *       label:     "Spoiler" or () => "Spoiler",   // pill on the opening line
+ *       className: "",       // extra class on every line of the block
+ *       color:     "#8b5cf6",                 // card tint (default warm)
+ *       css:       ".line.block-spoiler.block-body { font-style: italic; }",
+ *   });
+ *   off();                                   // or Editor.unregisterBlock(name)
+ *   Editor.blocks                            // registered names
  *
- * ROADMAP — block-type registry: the masked region is one instance of a
- * general mechanic (spoiler, collapse, callout share the same bounded-block
- * parsing this file already does, fence-aware and line-state-tracked). The
- * planned shape is registerBlock({ match, masked, toggle, className }) so a
- * host registers its own block names and this file stops knowing what a
- * "secret" means. Until that lands, :::secret is the single built-in.
+ * match(src) is the general form: "open" / "close" bound a block, "line"
+ * makes one self-contained line a block (a marker form). open/close is the
+ * shorthand. Blocks are only recognised outside code fences, do not nest
+ * (inside a block only its own close counts) and render inline markdown in
+ * their body. Every line of a block gets .block-<part> (open, close, body,
+ * line) and .block-<name>; `css` is injected into every editor's shadow
+ * root, which is the only way a host can style them. Registering (or
+ * unregistering) re-renders every editor on the page.
+ *
+ * :::secret is not built in: js/sac-md-secret.js registers it (load it
+ * after this file). The demo does, and so does any host that wants it.
+ *
+ * SECURITY: masking is a purely VISUAL layer. The plaintext stays in the DOM
+ * and in whatever the host saves from `value`. The blur is a courtesy
+ * against shoulder-surfing, never a security boundary - a host that needs
+ * content kept from an index, an agent or a wire has to enforce that
+ * server-side. Do not build on the blur.
  *
  * Dependencies (loaded as globals before this script):
  *   marked     - CommonMark + GFM tokenizer. We only use marked.Lexer.lexInline
@@ -92,7 +107,7 @@
  */
 
 // Reveal-toggle SVG: open eye with a diagonal slash that's hidden by default
-// and surfaced via CSS when the block carries .secret-revealed. One-line so
+// and surfaced via CSS when the block carries .block-revealed. One-line so
 // no whitespace text nodes end up in line.textContent and break round-trip.
 const REVEAL_EYE_SVG =
     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ` +
@@ -139,8 +154,7 @@ function mdAddStrings() {
         "md-editor.tableColumn": "Spalte",
         "md-editor.linkPrompt":  "Link-Adresse",
         "md-editor.linkText":    "Linktext",
-        "md-editor.secret":      "Geheim",
-        "md-editor.reveal":      "Geheimen Inhalt zeigen / verbergen",
+        "md-editor.reveal":      "Inhalt zeigen / verbergen",
     });
 }
 
@@ -185,9 +199,30 @@ class SacMdEditor extends HTMLElement {
         this._suppressHistory = false;
     }
 
+    // Block registry - see the header. Static: blocks are a page-wide
+    // vocabulary, like custom elements themselves.
+    static registerBlock(def) {
+        const block = compileBlock(def);
+        BLOCKS.delete(block.name);           // re-registering replaces
+        BLOCKS.set(block.name, block);
+        refreshBlocks();
+        return () => {
+            if (BLOCKS.get(block.name) !== block) return;
+            BLOCKS.delete(block.name);
+            refreshBlocks();
+        };
+    }
+    static unregisterBlock(name) {
+        if (BLOCKS.delete(name)) refreshBlocks();
+    }
+    static get blocks() { return [...BLOCKS.keys()]; }
+
     connectedCallback() {
         mdAddStrings();
         if (!this.shadowRoot.firstChild) this._render();
+        LIVE_EDITORS.add(this);
+        // Registrations made while this editor was detached.
+        if (this._blockGen !== blockGen) this._refreshBlocks();
         this._relabel();
         if (window.sac && window.sac.lang && !this._offLang) {
             this._offLang = window.sac.lang.onChange(() => this._relabel());
@@ -204,6 +239,16 @@ class SacMdEditor extends HTMLElement {
             this._onDocSelect = null;
         }
         if (this._offLang) { this._offLang(); this._offLang = null; }
+        LIVE_EDITORS.delete(this);
+    }
+
+    /** The registry changed: new block CSS, and every line re-derived. */
+    _refreshBlocks() {
+        this._blockGen = blockGen;
+        if (!this._editor) return;
+        this._blockStyle.textContent = blockCss;
+        for (const line of this._editor.children) line._blockState = undefined;
+        this._syncBlockState();
     }
 
     /** Every editor-owned string in the current language, in place - no
@@ -218,10 +263,12 @@ class SacMdEditor extends HTMLElement {
             btn.setAttribute("aria-label", tip);
             if (spec[2]) btn.textContent = mdT(spec[2], spec[3]);
         });
-        // The :::secret badge is CSS generated content - its word travels as
-        // a custom property holding a CSS string (JSON quoting is valid CSS).
-        this._editor.style.setProperty("--sac-md-secret-label",
-            JSON.stringify(mdT("secret", "Secret")));
+        // Block pills are CSS generated content; a label may be a function
+        // of the page language, so every pill is re-read here.
+        this._editor.querySelectorAll(".line.block-open, .line.block-line").forEach((l) => {
+            const def = BLOCKS.get(l.dataset.blockName);
+            if (def) setBlockLabel(l, def);
+        });
         const reveal = this._revealLabel();
         this._editor.querySelectorAll(".sac-reveal-toggle").forEach((el) => {
             el.setAttribute("aria-label", reveal);
@@ -229,7 +276,7 @@ class SacMdEditor extends HTMLElement {
         });
     }
 
-    _revealLabel() { return mdT("reveal", "Show / hide secret body"); }
+    _revealLabel() { return mdT("reveal", "Show / hide content"); }
 
     get value() {
         if (!this._editor) return "";
@@ -301,6 +348,12 @@ class SacMdEditor extends HTMLElement {
 
     _render() {
         this.shadowRoot.innerHTML = TEMPLATE;
+        // Host CSS for registered blocks (registerBlock({ css })), after the
+        // template's own style so it can override it.
+        this._blockStyle = document.createElement("style");
+        this._blockStyle.textContent = blockCss;
+        this.shadowRoot.appendChild(this._blockStyle);
+        this._blockGen = blockGen;
 
         this._editor     = this.shadowRoot.querySelector(".editor");
         this._toolbar    = this.shadowRoot.querySelector(".toolbar");
@@ -335,7 +388,7 @@ class SacMdEditor extends HTMLElement {
         this._editor.addEventListener("copy",        (e) => this._handleCopy(e));
         this._editor.addEventListener("focusout",    (e) => this._handleFocusOut(e));
 
-        // Reveal-toggle click (eye icon on :::secret lines). mousedown.prevent
+        // Reveal-toggle click (eye icon on a block's opening line). mousedown.prevent
         // keeps the caret in the surrounding line rather than leaping into
         // the non-editable span. Use closest() because the real click target
         // is the inner <svg> (or a path/circle/line) — classList on e.target
@@ -347,7 +400,7 @@ class SacMdEditor extends HTMLElement {
             const toggle = e.target.closest?.(".sac-reveal-toggle");
             if (!toggle) return;
             const line = this._lineContaining(toggle);
-            if (line) this._toggleSecretReveal(line);
+            if (line) this._toggleBlockReveal(line);
         });
 
         // Toolbar: mousedown.preventDefault keeps caret focus in the editor so
@@ -375,7 +428,7 @@ class SacMdEditor extends HTMLElement {
 
     /** Render a line's inner DOM from its source. Adds marker spans and
      *  inline wrappers while preserving textContent exactly. `state` carries
-     *  the cross-line trackers: inFence (``` / ~~~ group - the opening run) and inSecret (:::secret
+     *  the cross-line trackers: inFence (``` / ~~~ group - the opening run) and inBlock (registered
      *  group) — each must advance on every line even when rendering wouldn't
      *  otherwise change the output. */
     _renderLine(line, src = null, state = null, ahead) {
@@ -431,36 +484,37 @@ class SacMdEditor extends HTMLElement {
                 return;
             }
         }
-        if (blockType === "secret-open") {
+        if (blockType === "block-open" || blockType === "block-line") {
             // Reveal toggle is a contenteditable=false span carrying an
             // inline SVG eye. SVG shape children (path/circle/line) have no
             // text nodes, so line.textContent stays equal to the source —
             // critical for `value` round-trip, _flattenLine, etc. Slash
             // line is always rendered but hidden by CSS unless the block
-            // has .secret-revealed. All SVG attributes sit on one line so
+            // has .block-revealed. All SVG attributes sit on one line so
             // no whitespace text nodes creep in. The editor-level click
             // listener below wires the interaction.
             line.innerHTML =
                 `<span class="block-marker">${escapeHtml(src)}</span>` +
-                `<span class="sac-reveal-toggle" contenteditable="false" ` +
-                `      role="button" tabindex="-1" ` +
-                `      aria-label="${escapeAttr(this._revealLabel())}" ` +
-                `      title="${escapeAttr(this._revealLabel())}">` +
-                REVEAL_EYE_SVG +
-                `</span>`;
+                (block.def.toggle
+                    ? `<span class="sac-reveal-toggle" contenteditable="false" ` +
+                      `      role="button" tabindex="-1" ` +
+                      `      aria-label="${escapeAttr(this._revealLabel())}" ` +
+                      `      title="${escapeAttr(this._revealLabel())}">` +
+                      REVEAL_EYE_SVG +
+                      `</span>`
+                    : "");
             return;
         }
-        if (blockType === "secret-close") {
+        if (blockType === "block-close") {
             line.innerHTML = `<span class="block-marker">${escapeHtml(src)}</span>`;
             return;
         }
-        if (blockType === "secret-body") {
-            // Content wrapped in .secret-body-text so the blur can be applied
-            // to just the text — blurring the whole line would smear the
-            // card's left border too. Source is preserved (line.textContent
-            // still equals src).
+        if (blockType === "block-body") {
+            // Content wrapped in .block-body-text so a mask blurs just the
+            // text - blurring the whole line would smear the card's left
+            // border too. Source is preserved (line.textContent equals src).
             const inner = src === "" ? "" : renderInline(src, defs);
-            line.innerHTML = `<span class="secret-body-text">${inner}</span>`;
+            line.innerHTML = `<span class="block-body-text">${inner}</span>`;
             return;
         }
         if (TABLE_TYPES.has(blockType)) {
@@ -544,18 +598,30 @@ class SacMdEditor extends HTMLElement {
      *  Called on every keystroke so that as you type `# `, the font jumps to
      *  heading size live. Also stores the block type in dataset.block.
      *
-     *  Preserves the .secret-revealed class across re-classification so a
+     *  Preserves the .block-revealed class across re-classification so a
      *  keystroke on a revealed boundary line doesn't re-mask the block. */
     _applyBlockClass(line, src, block) {
         const active   = line.classList.contains("active");
-        const revealed = line.classList.contains("secret-revealed");
+        const revealed = line.classList.contains("block-revealed");
         const classes = ["line"];
         if (active)    classes.push("active");
-        if (revealed)  classes.push("secret-revealed");
+        if (revealed && block.def) classes.push("block-revealed");
         if (block.classes) classes.push(block.classes);
         if (src === "") classes.push("empty");
         line.className = classes.join(" ");
         line.dataset.block = block.type;
+        // Registered blocks carry their name, tint and pill label on the
+        // line itself (inline custom properties); anything else sheds them.
+        if (block.def) {
+            line.dataset.blockName = block.def.name;
+            line.style.setProperty("--mdb-color", block.def.color);
+            if (block.type === "block-open" || block.type === "block-line") setBlockLabel(line, block.def);
+            else line.style.removeProperty("--mdb-label");
+        } else if (line.dataset.blockName) {
+            delete line.dataset.blockName;
+            line.style.removeProperty("--mdb-color");
+            line.style.removeProperty("--mdb-label");
+        }
     }
 
     /** Rebuild classes + inner DOM for every line. Use after multi-line state
@@ -906,7 +972,7 @@ class SacMdEditor extends HTMLElement {
         // Full re-render on blur. We used to just re-render active lines, but
         // that left cross-line state drift — e.g. typing :::secret on a line
         // doesn't mask the lines below until every subsequent line is re-
-        // classified with the new inSecret state. Doing it on blur is cheap
+        // classified with the new block state. Doing it on blur is cheap
         // and guarantees the "resting" view is always correct.
         if (this._inTable()) this._formatTableAt(this._activeLine);
         this._renderAllInactive();
@@ -1707,7 +1773,7 @@ class SacMdEditor extends HTMLElement {
         }));
     }
 
-    /** Compute the fence + secret state just before a given line — lets us
+    /** Compute the fence + block state just before a given line - lets us
      *  render a single line correctly without re-rendering the whole document. */
     _stateBefore(line) {
         const state = freshState();
@@ -1769,16 +1835,18 @@ class SacMdEditor extends HTMLElement {
         }
     }
 
-    /** Reveal-toggle click handler. Finds the bounded block from the :::secret
-     *  line the eye icon lives on, walks forward until :::end (or end of doc),
-     *  and flips .secret-revealed on every line in the range. Session-only —
-     *  any full re-render (paste, value set) drops the class. */
-    _toggleSecretReveal(openLine) {
-        const reveal = !openLine.classList.contains("secret-revealed");
-        openLine.classList.toggle("secret-revealed", reveal);
+    /** Reveal-toggle click handler. From the opening line the eye icon
+     *  lives on, walks forward to the block's close (or end of document) and
+     *  flips .block-revealed on every line in the range; a one-line block
+     *  flips just itself. Session-only - a value set drops it. */
+    _toggleBlockReveal(openLine) {
+        const reveal = !openLine.classList.contains("block-revealed");
+        openLine.classList.toggle("block-revealed", reveal);
+        if (openLine.dataset.block === "block-line") return;
         for (let cur = openLine.nextElementSibling; cur; cur = cur.nextElementSibling) {
-            cur.classList.toggle("secret-revealed", reveal);
-            if (cur.dataset.block === "secret-close") break;
+            if (cur.dataset.block !== "block-body" && cur.dataset.block !== "block-close") break;
+            cur.classList.toggle("block-revealed", reveal);
+            if (cur.dataset.block === "block-close") break;
         }
     }
 }
@@ -1923,14 +1991,74 @@ function renderTableRow(src, kind, aligns, defs) {
     }).join("");
 }
 
-/** Cross-line state at the top of a document. inFence / inSecret as
- *  before; `prev` is what the previous line was ("blank", "para",
+// ---------------------------------------------------------------------------
+// Block registry (static API on the element class - see the header)
+// ---------------------------------------------------------------------------
+
+const BLOCKS = new Map();          // name -> compiled definition, in order
+const LIVE_EDITORS = new Set();    // connected editors, refreshed on changes
+let blockCss = "";                 // every definition's css, concatenated
+let blockGen = 0;                  // bumps on every change
+
+function compileBlock(def) {
+    if (!def || typeof def.name !== "string" || !/^[a-z][a-z0-9-]*$/.test(def.name)) {
+        throw new TypeError("sac-md-editor registerBlock: name must be a-z, 0-9 and dashes");
+    }
+    // A /g or /y RegExp keeps lastIndex between test() calls - strip them.
+    const plain = (re) => new RegExp(re.source, re.flags.replace(/[gy]/g, ""));
+    let match = def.match;
+    if (typeof match !== "function") {
+        if (!(def.open instanceof RegExp) || !(def.close instanceof RegExp)) {
+            throw new TypeError(`sac-md-editor registerBlock("${def.name}"): give match(src), or open and close RegExps`);
+        }
+        const open = plain(def.open), close = plain(def.close);
+        match = (src) => open.test(src) ? "open" : close.test(src) ? "close" : null;
+    }
+    return {
+        name:      def.name,
+        match,
+        masked:    !!def.masked,
+        toggle:    !!def.toggle,
+        label:     def.label == null ? null : def.label,
+        className: def.className ? String(def.className).trim() : "",
+        color:     def.color ? String(def.color) : "",
+        css:       def.css ? String(def.css) : "",
+    };
+}
+
+/** A host's match() is foreign code: a throw must not break rendering. */
+function blockMatch(def, src) {
+    try { return def.match(src); } catch { return null; }
+}
+
+function blockClasses(def, part) {
+    return `block-${part} block-${def.name}` +
+        (def.masked ? " block-masked" : "") + (def.className ? " " + def.className : "");
+}
+
+/** The pill text travels as a CSS string in a custom property (JSON quoting
+ *  is valid CSS); no label means no pill. */
+function setBlockLabel(line, def) {
+    let label = def.label;
+    if (typeof label === "function") { try { label = label(); } catch { label = null; } }
+    if (label == null || label === "") line.style.removeProperty("--mdb-label");
+    else line.style.setProperty("--mdb-label", JSON.stringify(String(label)));
+}
+
+function refreshBlocks() {
+    blockCss = [...BLOCKS.values()].map((d) => d.css).filter(Boolean).join("\n");
+    blockGen++;
+    for (const editor of LIVE_EDITORS) editor._refreshBlocks();
+}
+
+/** Cross-line state at the top of a document. `inFence` and `inBlock` (the
+ *  open registered block's name, "" outside one) as before; `prev` is what the previous line was ("blank", "para",
  *  "quote", "list", "code", "other") and `listCtx` whether a list is still
  *  open (a blank line keeps it, an unindented non-list line ends it).
  *  `table` is the open table's alignments ("" outside one) and `pipeCols`
  *  the cell count of the line above if it could be a table header. */
 function freshState() {
-    return { inFence: false, inSecret: false, prev: "blank", listCtx: false, table: "", pipeCols: 0 };
+    return { inFence: false, inBlock: "", prev: "blank", listCtx: false, table: "", pipeCols: 0 };
 }
 
 // Lookahead facts about a line: its setext level and, for a table header,
@@ -1938,8 +2066,8 @@ function freshState() {
 const NO_AHEAD = Object.freeze({ setext: 0, table: "" });
 
 /** THE line classifier. Everything that decides what a line is lives here:
- *  fences first (inside one nothing else counts), then :::secret bounds,
- *  secret bodies, setext underlines, indented code, link definitions and
+ *  fences first (inside one nothing else counts), then registered blocks
+ *  (bounds, bodies, one-line markers), tables, setext underlines, indented code, link definitions and
  *  finally the single-line syntax (parseLineBlock). `ahead` carries what
  *  only the lines BELOW can tell: the setext level (1/2) when an underline
  *  turns this paragraph into a heading, and the table alignments when a
@@ -1951,9 +2079,21 @@ function classifyLine(src, state, ahead = NO_AHEAD) {
                               : { type: "fence-body", classes: "fence-body" };
     }
     if (fence.boundary) return { type: "fence", classes: "fence" };
-    if (/^:{2,3}secret(\s|$)/.test(src)) return { type: "secret-open",  classes: "secret-marker secret-open" };
-    if (/^:{2,3}end(\s|$)/.test(src))    return { type: "secret-close", classes: "secret-marker secret-close" };
-    if (state.inSecret) return { type: "secret-body", classes: "secret-body" };
+    // Registered blocks. Inside one only its own close counts - no nesting,
+    // and another block's opener is body text.
+    if (state.inBlock) {
+        const def = BLOCKS.get(state.inBlock);
+        if (def) {
+            return blockMatch(def, src) === "close"
+                ? { type: "block-close", classes: blockClasses(def, "close"), def }
+                : { type: "block-body",  classes: blockClasses(def, "body"),  def };
+        }
+    }
+    for (const def of BLOCKS.values()) {
+        const m = blockMatch(def, src);
+        if (m === "open") return { type: "block-open", classes: blockClasses(def, "open"), def };
+        if (m === "line") return { type: "block-line", classes: blockClasses(def, "line"), def };
+    }
     // Tables (GFM): body rows continue while lines hold a pipe and start no
     // other block; the delimiter row must match the header's cell count.
     const hasPipe = src.includes("|");
@@ -1992,8 +2132,13 @@ function classifyLine(src, state, ahead = NO_AHEAD) {
  *  _syncBlockState both walk with it. */
 function advanceState(state, text, type = classifyLine(text, state).type) {
     if (type === "fence") state.inFence = fenceStep(text, state.inFence).open;
-    else if (type === "secret-open")  state.inSecret = true;
-    else if (type === "secret-close") state.inSecret = false;
+    else if (type === "block-open") {
+        state.inBlock = "";
+        for (const def of BLOCKS.values()) {
+            if (blockMatch(def, text) === "open") { state.inBlock = def.name; break; }
+        }
+    }
+    else if (type === "block-close") state.inBlock = "";
 
     const isList = type === "ul" || type === "ol" || type === "task";
     if (isList) state.listCtx = true;
@@ -2017,7 +2162,7 @@ function advanceState(state, text, type = classifyLine(text, state).type) {
  *  the state classifyLine reads, plus the lookahead facts. */
 function stateKey(state, ahead = NO_AHEAD) {
     const prev = state.prev === "para" ? "p" : state.prev === "quote" ? "q" : "";
-    return `${state.inFence || ""}|${state.inSecret ? "s" : ""}|${prev}|${state.listCtx ? "l" : ""}` +
+    return `${state.inFence || ""}|${state.inBlock}|${prev}|${state.listCtx ? "l" : ""}` +
            `|${state.table}|${state.pipeCols || ""}|${ahead.setext || ""}|${ahead.table}`;
 }
 
@@ -2629,58 +2774,64 @@ const TEMPLATE = `
         background: color-mix(in srgb, var(--fg, #fff) 9%, transparent);
     }
 
-    /* Secret block — a warm-tinted card (same visual vocabulary as code
-       fence, but orange). Applies to the two boundary lines + every
-       secret-body line, so a multi-line block reads as one shape. When a
-       boundary line goes active, the card treatment stays but the raw
-       :::secret / :::end chars come back (like fence active). */
-    .line.secret-marker,
-    .line.secret-body {
-        background: rgba(245, 158, 11, 0.045);
+    /* Registered blocks (registerBlock) - a tinted card in the block's
+       colour (--mdb-color on the line, warm by default) across the opening
+       line, the body lines and the closing line, so a multi-line block
+       reads as one shape. When a boundary line goes active the card stays
+       and its raw marker chars come back (like a fence). */
+    .line.block-open,
+    .line.block-close,
+    .line.block-body,
+    .line.block-line {
+        --mdb-c: var(--mdb-color, var(--accent-warm, #f59e0b));
+        background: color-mix(in srgb, var(--mdb-c) 4.5%, transparent);
         margin: 0 -10px;
         padding-left: 14px;
         padding-right: 14px;
-        border-left: 3px solid rgba(245, 158, 11, 0.35);
+        border-left: 3px solid color-mix(in srgb, var(--mdb-c) 35%, transparent);
         border-radius: 0;
     }
-    .line.secret-marker {
-        color: var(--accent-warm, #f59e0b);
-        font-family: 'Inter', sans-serif;
+    .line.block-open,
+    .line.block-close,
+    .line.block-line {
+        color: var(--mdb-c);
         font-size: 0.9em;
     }
 
-    /* Inactive boundaries: hide the literal ':::secret' / ':::end' chars so
-       they don't look like code. Chars stay in textContent (font-size: 0),
-       so the round-trip invariant holds. */
-    .line.secret-marker:not(.active) .block-marker {
+    /* Inactive boundaries: hide the literal marker chars. They stay in
+       textContent (font-size: 0), so the round-trip invariant holds. */
+    .line.block-open:not(.active) .block-marker,
+    .line.block-close:not(.active) .block-marker,
+    .line.block-line:not(.active):not(.block-revealed) .block-marker {
         color: transparent;
         font-size: 0;
     }
 
-    /* Open boundary (inactive): "🔒 Secret" pill via ::before. Pseudo
-       content is invisible to textContent, safe to use for labels. */
-    .line.secret-open:not(.active) {
+    /* Opening (or one-line) block, inactive: the label pill via ::before.
+       Pseudo content is invisible to textContent, safe for labels; no
+       label, no pill. */
+    .line.block-open:not(.active),
+    .line.block-line:not(.active) {
         padding-top: 6px;
         padding-bottom: 4px;
     }
-    .line.secret-open:not(.active)::before {
-        /* The word comes from _relabel() (page language); the fallback
-           keeps the editor English without the kit. */
-        content: "\\1F512  " var(--sac-md-secret-label, "Secret");
+    .line.block-open:not(.active)::before,
+    .line.block-line:not(.active)::before {
+        content: var(--mdb-label, none);
         display: inline-block;
         padding: 2px 10px;
-        font-size: 0.78em;
+        font-size: 0.86em;
         font-weight: 600;
         letter-spacing: 0.02em;
-        color: var(--accent-warm, #f59e0b);
-        background: rgba(245, 158, 11, 0.12);
-        border: 1px solid rgba(245, 158, 11, 0.25);
+        color: var(--mdb-c);
+        background: color-mix(in srgb, var(--mdb-c) 12%, transparent);
+        border: 1px solid color-mix(in srgb, var(--mdb-c) 25%, transparent);
         border-radius: 999px;
     }
 
-    /* Close boundary (inactive): collapse to a thin footer — the card's
-       visual "bottom edge" with no visible ':::end' text. */
-    .line.secret-close:not(.active) {
+    /* Close boundary (inactive): collapse to a thin footer - the card's
+       bottom edge with no visible marker text. */
+    .line.block-close:not(.active) {
         min-height: 6px;
         height: 6px;
         padding-top: 0;
@@ -2688,41 +2839,35 @@ const TEMPLATE = `
         overflow: hidden;
     }
 
-    /* Active boundaries drop the caret-ready padding. The card bg + border
-       remain (consistency with fence active). */
-    .line.secret-marker.active {
+    /* Active boundaries drop the caret-ready padding. The card stays. */
+    .line.block-open.active,
+    .line.block-close.active,
+    .line.block-line.active {
         padding-top: 2px;
         padding-bottom: 2px;
     }
 
-    /* Body lines: inline markdown still renders, but a CSS blur on the
-       inner .secret-body-text span prevents incidental over-the-shoulder
-       reads. Blurring the whole line would smear the card's left border
-       too — applying it to a child leaves the chrome sharp. Active (caret)
-       line drops the mask so it's editable. Reveal-toggle click adds
-       .secret-revealed to every line in the block for session-only
-       unmasking. */
-    .line.secret-body {
-        color: var(--accent-warm, #f59e0b);
-        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-        font-size: 0.9em;
-    }
-    .line.secret-body:not(.active):not(.secret-revealed) .secret-body-text {
+    /* Masked bodies: inline markdown still renders, but a CSS blur on the
+       inner .block-body-text span prevents incidental over-the-shoulder
+       reads. Blurring the whole line would smear the card's left border -
+       a child keeps the chrome sharp. The active (caret) line drops the
+       mask so it's editable; the reveal toggle adds .block-revealed to
+       every line of the block for session-only unmasking. */
+    .line.block-masked.block-body:not(.active):not(.block-revealed) .block-body-text {
         filter: blur(4px);
         user-select: none;
         transition: filter 0.15s ease;
         display: inline-block;
     }
-    .line.secret-body:not(.active):not(.secret-revealed):hover .secret-body-text {
+    .line.block-masked.block-body:not(.active):not(.block-revealed):hover .block-body-text {
         filter: blur(3px);
     }
 
-    /* Reveal toggle — inline SVG eye on the :::secret boundary. SVG shape
+    /* Reveal toggle - inline SVG eye on a block's opening line. SVG shape
        children have no text nodes, so line.textContent stays equal to the
        source (the whole editor model depends on that invariant).
-       contenteditable=false on the span keeps the caret from landing in
-       it. The diagonal slash is always rendered; we hide it unless the
-       block carries .secret-revealed. */
+       contenteditable=false keeps the caret out of it. The diagonal slash
+       is always rendered; hidden unless the block carries .block-revealed. */
     .sac-reveal-toggle {
         display: inline-flex;
         align-items: center;
@@ -2735,10 +2880,10 @@ const TEMPLATE = `
         border-radius: var(--radius-m, 4px);
         transition: opacity 0.12s, background 0.12s;
         vertical-align: middle;
-        color: var(--accent-warm, #f59e0b);
+        color: var(--mdb-c);
     }
-    /* Scaled to sit alongside the "Secret" pill text — slightly taller than
-       the pill glyph so the icon reads with matching visual weight. */
+    /* Slightly taller than the pill glyph so the icon reads with matching
+       visual weight. */
     .sac-reveal-toggle svg {
         width: 14px;
         height: 14px;
@@ -2747,11 +2892,11 @@ const TEMPLATE = `
     .sac-reveal-toggle .sac-eye-slash { visibility: hidden; }
     .sac-reveal-toggle:hover {
         opacity: 1;
-        background: rgba(245, 158, 11, 0.14);
+        background: color-mix(in srgb, var(--mdb-c) 14%, transparent);
     }
     /* Revealed state: surface the slash through the eye. */
-    .line.secret-revealed .sac-reveal-toggle { opacity: 0.95; }
-    .line.secret-revealed .sac-reveal-toggle .sac-eye-slash { visibility: visible; }
+    .line.block-revealed .sac-reveal-toggle { opacity: 0.95; }
+    .line.block-revealed .sac-reveal-toggle .sac-eye-slash { visibility: visible; }
 
     /* Task list: render [ ] / [x] as a visual checkbox while inactive. The
        bracket characters stay in textContent (font-size: 0 hides them

@@ -22,6 +22,7 @@ npx serve .        # http://localhost:3000 — the root page is the demo
 <script defer src="kit/js/vendor/marked.min.js"></script>
 <script defer src="kit/js/vendor/purify.min.js"></script>
 <script defer src="js/sac-md-editor.js"></script>
+<script defer src="js/sac-md-secret.js"></script>  <!-- optional: :::secret blocks -->
 
 <sac-md-editor placeholder="Write…"></sac-md-editor>
 ```
@@ -32,6 +33,7 @@ npx serve .        # http://localhost:3000 — the root page is the demo
 | Property | `value` — the markdown source (getter + setter) |
 | Events | `input` (every edit), `change` (focus leaves after an edit) |
 | Methods | `focus()` |
+| Static | `registerBlock(def)` → unregister function · `unregisterBlock(name)` · `blocks` — see [Blocks](#blocks-registerblock) |
 | Keyboard | Ctrl/Cmd+B/I/K · Enter continues lists · Tab soft-tabs · Backspace merges lines · in a table: Tab / Shift+Tab move between cells, Enter adds a row |
 | Language | Follows the page language through the kit's `sac.t` / `sac.lang`, relabelled live; ships German, keys `md-editor.*` |
 
@@ -55,21 +57,42 @@ in the DOM and get wrapped, never synthesized or deleted. That is what makes
 the save/load round-trip trivial, and it is the property every change to this
 codebase must keep.
 
-## Masked blocks (`:::secret`)
+## Blocks (`registerBlock`)
 
-Lines between `:::secret` and `:::end` (two or three colons accepted on read)
-render blurred, with an eye toggle on the boundary line for session-only
-reveal.
+The editor has no block names of its own. A page registers them once, and
+every editor on it picks them up, live:
+
+```js
+const Editor = customElements.get("sac-md-editor");
+Editor.registerBlock({
+    name:   "note",
+    open:   /^:::note(\s|$)/,
+    close:  /^:::end(\s|$)/,
+    label:  "Note",              // pill on the opening line (or a function)
+    color:  "#3b82f6",           // card tint
+    masked: false,               // true: body blurred until revealed
+    toggle: false,               // true: eye button on the opening line
+    css:    ".line.block-note.block-body { font-style: italic; }",
+});
+```
+
+Instead of `open` / `close`, `match(src)` may return `"open"`, `"close"` or
+`"line"` - the last makes a single line a block of its own, for marker forms.
+Blocks are recognised outside code fences only, do not nest, and render
+inline markdown in their body. The definition's `css` is injected into the
+editor's shadow root, the one way to style a block from outside.
+
+### `:::secret`
+
+`js/sac-md-secret.js` registers the one block the demo ships: lines between
+`:::secret` and `:::end` (two or three colons accepted on read) render
+blurred, with an eye toggle on the opening line for session-only reveal. Load
+it after the editor.
 
 > **Security note:** the blur is a courtesy against shoulder-surfing, not a
 > security boundary. The plaintext remains in the DOM and in whatever you save
 > from `value`. If secrets must stay out of an index, an agent or a wire, the
 > host application has to enforce that server-side. Do not build on the blur.
-
-Planned: a small **block-type registry**
-(`registerBlock({ match, masked, toggle, className })`) so hosts define their
-own bounded blocks — spoiler, collapse, callout — and `:::secret` stops being
-special-cased. Until then it is the single built-in.
 
 ## Vendoring
 
