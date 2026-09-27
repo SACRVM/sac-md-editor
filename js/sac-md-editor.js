@@ -26,9 +26,16 @@
  * Properties:
  *   value - string; markdown source (getter + setter).
  *
- * Events (bubble out of host):
- *   input  - fires after every edit (keystroke, paste, toolbar action).
- *   change - fires when focus leaves the component after an edit.
+ * Events - the kit convention (CustomEvent, detail { value }, bubbles, NOT
+ * composed; never fired by a programmatic `value` set):
+ *   sac:input  - once after every edit (keystroke, paste, toolbar action,
+ *                undo/redo, table re-alignment); detail.value = the source.
+ *   sac:change - when focus leaves the component after an edit;
+ *                detail.value = the source.
+ * Legacy, still fired until the consumers have moved (see CLAUDE.md):
+ *   input  - native Event after every edit (may arrive more than once per
+ *            keystroke: the browser's own plus the editor's).
+ *   change - native Event when focus leaves after an edit.
  *
  * Methods:
  *   focus() - focus the editor surface.
@@ -242,6 +249,32 @@ class SacMdEditor extends HTMLElement {
         LIVE_EDITORS.delete(this);
     }
 
+    /** Kit value events: detail { value }, bubbles, not composed. */
+    _fireSac(type) {
+        this.dispatchEvent(new CustomEvent(type, {
+            detail: { value: this.value },
+            bubbles: true,
+            composed: false,
+        }));
+    }
+
+    /** One sac:input per edit. A keystroke reaches the host as the browser's
+     *  input AND the editor's synthetic one, and the browser runs microtasks
+     *  between the two listeners, so batching cannot merge them. Instead
+     *  sac:input fires only when the value differs from the last one it
+     *  carried (or from the last programmatic set) - an event that changes
+     *  nothing reports nothing. */
+    _queueSacInput() {
+        const value = this.value;
+        if (value === this._sacValue) return;
+        this._sacValue = value;
+        this.dispatchEvent(new CustomEvent("sac:input", {
+            detail: { value },
+            bubbles: true,
+            composed: false,
+        }));
+    }
+
     /** The registry changed: new block CSS, and every line re-derived. */
     _refreshBlocks() {
         this._blockGen = blockGen;
@@ -287,6 +320,7 @@ class SacMdEditor extends HTMLElement {
 
     set value(v) {
         this._applyValue(v);
+        this._sacValue = this.value;      // the baseline for sac:input
         // External value-set is a "new document" - reset history so Ctrl+Z
         // can't restore the previous note's content into this one.
         this._resetHistory();
@@ -375,9 +409,12 @@ class SacMdEditor extends HTMLElement {
         // that bubble up from the internal contenteditable AND the synthetic
         // input events we dispatch from structural edits (toolbar, paste,
         // splitAt, etc.). One listener covers both paths.
-        this.addEventListener("input", () => {
+        this.addEventListener("input", (e) => {
+            // Our own sac:input is a CustomEvent named differently, so this
+            // only sees the native / synthetic "input" events.
             this._syncBlockState();
             this._scheduleHistorySnapshot();
+            this._queueSacInput();
         });
 
         this._editor.addEventListener("input",       (e) => this._handleInput(e));
@@ -986,6 +1023,7 @@ class SacMdEditor extends HTMLElement {
         if (this._dirty) {
             this._dirty = false;
             this.dispatchEvent(new Event("change", { bubbles: true }));
+            this._fireSac("sac:change");
         }
     }
 

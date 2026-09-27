@@ -104,8 +104,11 @@ Those are host concerns. This component only does the visual layer.
 
 ## API surface (public contract — breaking it needs a version bump)
 
-Attributes `placeholder`, `readonly` · property `value` · events `input`,
-`change` (native, composed) · method `focus()` · static
+Attributes `placeholder`, `readonly` · property `value` · events
+`sac:input` / `sac:change` (kit convention: `detail: { value }`, bubbles, not
+composed, never on a programmatic set; `sac:input` fires once per edit, only
+when the value changed) plus the legacy native `input` / `change` · method
+`focus()` · static
 `registerBlock(def)` → unregister fn, `unregisterBlock(name)`, `blocks`
 (definition fields: name, open/close or match, masked, toggle, label,
 className, color, css - see the header).
@@ -119,10 +122,12 @@ renaming a key is breaking too); strings follow `sac.lang` live via
 `_relabel()`, which only touches attributes, toolbar text and a CSS custom
 property, never line `textContent`.
 
-Known divergence from kit v2 conventions: the kit's value components fire
-`sac:change`/`sac:input` with `detail: { value }`; this editor still fires
-native `input`/`change` from its Fishbowl days. Aligning is a breaking change
-— do it deliberately, with the consumer, not as a drive-by.
+Kit event alignment is additive so far: `sac:input` / `sac:change` fire
+alongside the native `input` / `change` from the Fishbowl days. Dropping the
+native ones is the breaking half - do it deliberately, with the consumers
+(Fishbowl, markdown-pad), not as a drive-by. Note the native `input` arrives
+twice per keystroke (the browser's plus the editor's synthetic one); that is
+why `sac:input` dedupes by value.
 
 ## Roadmap (ordered)
 
@@ -131,8 +136,9 @@ native `input`/`change` from its Fishbowl days. Aligning is a breaking change
    it (or register its own, e.g. the encrypted single-line
    `:::secret#N:::end` form via `match` returning "line") when it next
    re-vendors past 27b9e2e - that is the breaking part.
-2. **Kit event alignment** — `sac:change`/`sac:input` per the kit convention,
-   coordinated with Fishbowl's switch to vendoring this repo.
+2. **Kit event alignment** — additive half done 2026-09-27 (`sac:input` /
+   `sac:change` fire). Remaining: drop native `input` / `change` once
+   Fishbowl and markdown-pad listen to the `sac:` events - coordinated.
 3. **Split the file** — upstream's own review called 2,092 lines in one file a
    wart. Only after 1 and 2; splitting first would make both harder to review.
 

@@ -31,7 +31,7 @@ npx serve .        # http://localhost:3000 — the root page is the demo
 |---|---|
 | Attributes | `placeholder`, `readonly` |
 | Property | `value` — the markdown source (getter + setter) |
-| Events | `input` (every edit), `change` (focus leaves after an edit) |
+| Events | `sac:input` (once per edit) and `sac:change` (focus leaves after an edit), `detail: { value }`, bubbling, not composed — the kit convention. Native `input` / `change` still fire for older hosts |
 | Methods | `focus()` |
 | Static | `registerBlock(def)` → unregister function · `unregisterBlock(name)` · `blocks` — see [Blocks](#blocks-registerblock) |
 | Keyboard | Ctrl/Cmd+B/I/K · Enter continues lists · Tab soft-tabs · Backspace merges lines · in a table: Tab / Shift+Tab move between cells, Enter adds a row |
