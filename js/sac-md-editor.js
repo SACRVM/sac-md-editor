@@ -2942,17 +2942,17 @@ const TEMPLATE = `
     .line.h6 { font-size: 0.88em; color: var(--text-muted, #888); }
     .line.heading:not(.active) .block-marker { display: none; }
 
-    /* Blockquote. A continuous left bar across a run of quote lines, plus
-       a very soft tint. No per-line rounded corners - they break up the
-       block visually when you stack multiple lines. The left bar sits at
-       the inside edge of the line's negative margin so it reads flush
-       with the gutter instead of hanging inside the padding. The angle-
-       bracket marker is hidden when inactive; the left bar is the cue. */
+    /* Blockquote. A continuous soft tint across a run of quote lines,
+       pulled out into the gutter by the negative margin. No colored left
+       stripe (kit rule: never a >=2px colored border on a rounded
+       surface) and no per-line rounded corners - they break up the block
+       visually when you stack multiple lines. The angle-bracket marker is
+       hidden when inactive; the tint plus the muted italic are the cue.
+       padding-left keeps the text where the old 3px stripe left it. */
     .line.quote {
-        background: color-mix(in srgb, var(--fg, #fff) 2.5%, transparent);
-        padding-left: 18px;
+        background: color-mix(in srgb, var(--fg, #fff) 6%, transparent);
+        padding-left: 21px;
         margin: 0 -10px;
-        border-left: 3px solid color-mix(in srgb, var(--fg, #fff) 28%, transparent);
         border-radius: 0;
         color: var(--text-muted, #bbb);
         font-style: italic;
@@ -3272,17 +3272,20 @@ const TEMPLATE = `
        colour (--mdb-color on the line, warm by default) across the opening
        line, the body lines and the closing line, so a multi-line block
        reads as one shape. When a boundary line goes active the card stays
-       and its raw marker chars come back (like a fence). */
+       and its raw marker chars come back (like a fence). The tint alone
+       draws the card - no colored left stripe (kit rule: never a >=2px
+       colored border on a rounded surface); the label pill and the
+       boundary text carry the colour. padding-left keeps the text where
+       the old 3px stripe left it. */
     .line.block-open,
     .line.block-close,
     .line.block-body,
     .line.block-line {
         --mdb-c: var(--mdb-color, var(--accent-warm, #f59e0b));
-        background: color-mix(in srgb, var(--mdb-c) 4.5%, transparent);
+        background: color-mix(in srgb, var(--mdb-c) 7%, transparent);
         margin: 0 -10px;
-        padding-left: 14px;
+        padding-left: 17px;
         padding-right: 14px;
-        border-left: 3px solid color-mix(in srgb, var(--mdb-c) 35%, transparent);
         border-radius: 0;
     }
     .line.block-open,
