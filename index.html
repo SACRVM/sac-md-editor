@@ -1,51 +1,165 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>sac-md-editor — demo</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#0b0f1a" media="(prefers-color-scheme: dark)">
+    <meta name="theme-color" content="#eef2f7" media="(prefers-color-scheme: light)">
+    <title>sac-md-editor</title>
+    <!-- The add-on's API page (GitHub Pages start page), from the kit's
+         templates/showcase.html. showcase.css is the page look; sac.showcase
+         writes the markup. Classic ordered defer, no build step. -->
     <link rel="stylesheet" href="kit/css/ui.css">
+    <link rel="stylesheet" href="kit/css/showcase.css">
 
-    <!-- The component needs marked + DOMPurify as globals; the vendored kit
-         ships both. Classic ordered defer, no build step. -->
+    <script defer src="kit/js/lib/globals.js"></script>
+    <script defer src="kit/js/i18n/de.js"></script>
+    <script defer src="kit/js/lib/icons.js"></script>
+    <script defer src="kit/js/lib/showcase.js"></script>
+    <script defer src="kit/js/components/sac-icon.js"></script>
+    <script defer src="kit/js/components/sac-nav.js"></script>
+    <script defer src="kit/js/components/sac-theme-toggle.js"></script>
+    <script defer src="kit/js/components/sac-lang-toggle.js"></script>
+    <!-- The add-on: marked + DOMPurify as globals (the kit ships both), the
+         editor, and the :::secret registration after it. -->
     <script defer src="kit/js/vendor/marked.min.js"></script>
     <script defer src="kit/js/vendor/purify.min.js"></script>
     <script defer src="js/sac-md-editor.js"></script>
-    <!-- :::secret is a block registration, not built in. -->
     <script defer src="js/sac-md-secret.js"></script>
-    <!-- Kit theme toggle so the demo can be checked in light and dark. -->
-    <script defer src="kit/js/components/sac-theme-toggle.js"></script>
 
     <style>
-        .demo-shell { max-width: 900px; margin: 0 auto; padding: 3rem 2rem; }
-        .demo-shell header { margin-bottom: 2rem; }
-        .demo-shell h1 { font-size: 2rem; font-weight: 800; }
-        .demo-shell p.lead { color: var(--text-muted); margin-top: .5rem; }
         /* Size only - border, radius and focus ring are the component's own,
            so the demo shows what every host gets. */
-        sac-md-editor { min-height: 420px; }
-        .demo-actions { display: flex; gap: .5rem; margin: 1rem 0 2rem; }
+        #editor { display: block; min-height: 420px; }
+        .demo-actions { flex-wrap: wrap; margin-top: 1rem; }
     </style>
 </head>
-<body>
-    <div class="demo-shell">
-        <header>
-            <h1>&lt;sac-md-editor&gt;</h1>
-            <p class="lead">Live-preview markdown editing — the caret line is raw
-               source, every other line renders. No mode switch, no build step.</p>
-        </header>
+<body class="app-page">
+    <sac-nav brand="sac-md-editor" brand-icon="pencil"
+             brand-href="https://sacrvm.github.io/sacrvm-appkit/#/styleguide/addons">
+        <div slot="context">
+            <sac-lang-toggle></sac-lang-toggle>
+            <sac-theme-toggle></sac-theme-toggle>
+        </div>
+    </sac-nav>
 
-        <sac-md-editor id="editor" placeholder="Write some markdown…"></sac-md-editor>
-
-        <div class="demo-actions">
-            <button class="btn" id="dump">Log value to console</button>
-            <button class="btn" id="ro">Toggle readonly</button>
-            <sac-theme-toggle style="margin-left: auto;"></sac-theme-toggle>
+    <div class="main-layout">
+        <div class="app-scroll">
+            <div class="sg-page" id="page"></div>
         </div>
     </div>
 
     <script defer>
-        window.addEventListener("DOMContentLoaded", () => {
+        document.addEventListener("DOMContentLoaded", () => {
+            const { code, table, compact, note } = sac.showcase;
+            const page = document.getElementById("page");
+            page.innerHTML = `
+                <h1>&lt;sac-md-editor&gt;</h1>
+                <p class="lead">Obsidian-style live-preview markdown editing: the line your
+                   caret sits on is raw source, every other line renders. No mode switch,
+                   no build step. Needs <code>marked</code> and <code>DOMPurify</code> as
+                   globals - the kit ships both; this page runs on SACRVM APPKIT 2.24.0.</p>
+
+                <div class="sg-demo">
+                    <sac-md-editor id="editor" placeholder="Write some markdown..."></sac-md-editor>
+                    <div class="toolbar demo-actions">
+                        <button class="btn" id="dump">Log value to console</button>
+                        <button class="btn" id="ro">Toggle readonly</button>
+                    </div>
+                </div>
+
+                <h2 id="use">Use</h2>
+                <p>Vendor <code>js/</code> beside your kit and load the editor after
+                   <code>marked</code> and <code>DOMPurify</code>.
+                   <code>sac-md-secret.js</code> is optional and goes after the editor.</p>
+                ${code(`<link rel="stylesheet" href="kit/css/ui.css">
+<script defer src="kit/js/vendor/marked.min.js"><\/script>
+<script defer src="kit/js/vendor/purify.min.js"><\/script>
+<script defer src="js/sac-md-editor.js"><\/script>
+<script defer src="js/sac-md-secret.js"><\/script>  <!-- optional: :::secret -->
+
+<sac-md-editor placeholder="Write..."></sac-md-editor>`)}
+                <p>Styling lives in the shadow root but reads the kit's seed tokens
+                   (<code>--fg</code>, <code>--field</code>, <code>--accent</code>,
+                   <code>--text</code>, <code>--border</code>, ...), so the editor rethemes
+                   with the page in light and dark. Every token has a dark fallback, so it
+                   also runs without the kit.</p>
+
+                <h2 id="api">API</h2>
+                ${table("Attribute", [
+                    ["placeholder", "Shown while the document is empty. Your string - translate it on your side."],
+                    ["readonly", "Disables editing and hides the toolbar. A click or tap on a masked block reveals / hides it."],
+                ])}
+                ${table("Property", [
+                    ["value", "The markdown source, getter and setter. A programmatic set fires no event."],
+                ])}
+                ${table("Event", [
+                    ["sac:input", "<code>detail { value }</code> once after every edit that changed the value (keystroke, paste, toolbar, undo/redo, table re-alignment). Bubbles, not composed."],
+                    ["sac:change", "<code>detail { value }</code> when focus leaves after an edit. Bubbles, not composed."],
+                    ["input / change", "Legacy native events, still fired for older hosts. <code>input</code> can arrive twice per keystroke."],
+                ])}
+                ${table("Method", [
+                    ["focus()", "Focuses the editing surface."],
+                ])}
+                ${table("Keyboard", [
+                    ["Ctrl/Cmd+B / I / K", "Bold / italic / link."],
+                    ["Enter", "Splits the line; continues <code>- * + 1. 1)</code> lists. On an empty item it leaves the list."],
+                    ["Backspace", "At the start of a line: merges it into the line above."],
+                    ["Tab", "Two-space soft tab."],
+                    ["Tab / Shift+Tab (table)", "Next / previous cell; past the last cell adds a row."],
+                    ["Enter / Esc (table)", "Enter adds a row below (on an empty row it leaves); Esc leaves the table. Leaving re-aligns the pipes - an undoable edit."],
+                ])}
+                <p>With the caret in a table, the toolbar's Table button opens a grid
+                   dialog (<code>part="table-dialog"</code>) to add, delete and move columns
+                   and rows and set alignment.</p>
+
+                <h2 id="blocks">Blocks</h2>
+                <p>The editor knows no block names of its own. A page registers them once on
+                   the element class, and every editor on it picks them up live.</p>
+                ${code(`const Editor = customElements.get("sac-md-editor");
+const off = Editor.registerBlock({
+    name:   "note",
+    open:   /^:::note(\\s|$)/,
+    close:  /^:::end(\\s|$)/,
+    label:  "Note",          // pill on the opening line (or a function)
+    color:  "#3b82f6",       // card tint
+    masked: false,           // true: body blurred until revealed
+    toggle: false,           // true: eye button on the opening line
+    css:    ".line.block-note.block-body { font-style: italic; }",
+});
+off();                       // or Editor.unregisterBlock("note")`)}
+                ${table("Static", [
+                    ["registerBlock(def)", "Adds a block for every editor on the page; returns an unregister function."],
+                    ["unregisterBlock(name)", "Removes it again."],
+                    ["blocks", "The registered names."],
+                ])}
+                ${table("Definition", [
+                    ["name", "<code>a-z 0-9 -</code>, unique."],
+                    ["open / close", "RegExps for the opening and closing line."],
+                    ["match(src)", "Instead of open/close: returns <code>\"open\"</code>, <code>\"close\"</code>, <code>\"line\"</code> (a one-line block) or null."],
+                    ["masked", "Body lines blurred until revealed."],
+                    ["toggle", "Eye button on the opening line, session-only reveal."],
+                    ["label", "Pill text on the opening line, a string or a function (for the page language)."],
+                    ["className", "Extra class on every line of the block."],
+                    ["color", "Card tint; warm by default."],
+                    ["css", "Injected into every editor's shadow root - the one way to style a block from outside."],
+                ])}
+                <p>Blocks are recognised outside code fences only, do not nest, and render
+                   inline markdown in their body. <code>js/sac-md-secret.js</code> registers
+                   <code>:::secret</code> ... <code>:::end</code> (two or three colons on
+                   read): blurred, with the eye toggle.</p>
+                ${note("<b>Security:</b> the blur is a courtesy against shoulder-surfing, not a security boundary. The plaintext stays in the DOM and in whatever you save from <code>value</code>. If secrets must stay out of an index, an agent or a wire, the host has to enforce that server-side. Do not build on the blur.")}
+
+                <h2 id="lang">Language</h2>
+                <p>The editor's own strings (toolbar, reveal toggle, link prompt, the
+                   <code>:::secret</code> pill) follow <code>sac.lang</code> live, without
+                   re-rendering the document. It ships German; other languages go in through
+                   <code>sac.i18n.add(lang, { "md-editor.bold": ... })</code>. Without the
+                   kit's <code>globals.js</code> it stays English.</p>
+
+                ${compact("no separate phone layout. A tap puts the caret on a line and shows its source; in read-only mode a tap on a masked block reveals it.")}`;
+            sac.showcase.watchCode(page);
+
             const ed = document.getElementById("editor");
             ed.value = [
                 "# Hello",
@@ -56,13 +170,18 @@
                 "- Lists continue on Enter",
                 "- Enter on an empty item exits the list",
                 "",
+                "| Key | Does |",
+                "| --- | --- |",
+                "| Tab | next cell |",
+                "| Esc | leaves the table |",
+                "",
                 "```",
-                "code fences are left alone — :::secret in here is just text",
+                "code fences are left alone - :::secret in here is just text",
                 "```",
                 "",
                 ":::secret",
                 "Blurred until you click the eye on the boundary line.",
-                "Session-only, purely visual — see the README's security note.",
+                "Session-only, purely visual - see the security note below.",
                 ":::end",
                 "",
                 "> The canonical document is the concatenated textContent of the",
