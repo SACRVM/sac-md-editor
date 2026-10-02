@@ -123,6 +123,11 @@
     --radius-m: 4px;   /* controls: buttons, inputs, chips, menu items, tabs */
     --radius-l: 6px;   /* surfaces: panels, cards, tiles, windows, dialogs, popovers, toasts */
 
+    /* Monospace stack — kbd, logs, hex/date/time readouts, file names. One
+       token so every monospace surface (light DOM or shadow root — custom
+       properties inherit into both) stays in sync. Not theme-dependent. */
+    --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
     /* Small ghost icon button — ONE measure for the light-DOM .icon-btn and
        the shadow buttons that must match it (sac-copy-button). Custom
        properties cross shadow roots; a class does not. 14/26 ≈ the kit's
@@ -539,6 +544,29 @@ input[type="checkbox"], input[type="radio"] {
     accent-color: var(--accent);
 }
 
+/* .cell-input — a plain <input> / <textarea> as a cell editor (the
+   size="cell" look of the kit fields): borderless, fills its cell, the
+   cell's font, no own focus ring — the grid draws the cell's. A plain input
+   fires no sac:commit / sac:cancel; its host reads Enter / Escape / Tab
+   itself. Style guide → Components → Cell editors. */
+.cell-input,
+.cell-input:hover:not(:disabled),
+.cell-input:focus {
+    display: block;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0 var(--cell-padding-inline, 8px);
+    font: inherit;
+    color: inherit;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    outline: none;
+}
+textarea.cell-input { padding-block: 6px; resize: none; }
+
 /* Table & kbd baseline — plain markup, no class required. */
 table {
     width: 100%;
@@ -566,7 +594,7 @@ tbody tr:hover {
 }
 
 kbd {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 0.82em;
     background: var(--field);
     border: 1px solid var(--border-strong);
@@ -844,7 +872,7 @@ a.nav-icon-btn { text-decoration: none; }
     padding: 0.75rem;
     border-radius: var(--radius-m);
     border: 1px solid var(--border);
-    font-family: monospace;
+    font-family: var(--font-mono);
     -webkit-user-select: text;
     user-select: text;
 }
@@ -1110,12 +1138,51 @@ a.nav-icon-btn { text-decoration: none; }
     margin: 0;
 }
 
+/* Tiles are SQUARE: medium 1×1, .wide 2 columns × 1 row (as tall as one
+   column is wide), .large 2×2. The columns stay auto-fill 280px-minimum and
+   stretch, so a cell's size is only known from the grid's own width: the
+   grid is a container, every child derives --tile-size from 100cqw and the
+   column count (--grid-cols, stepped below at exactly the widths where
+   auto-fill adds a column) and takes it as its height. Every row is then
+   one --tile-size tall whatever mixes in it. Items get the height, not the
+   rows — so never give a .grid an inline grid-auto-rows.
+   A ONE-column grid (a phone, a narrow window or panel) is a list, not a
+   stack of screen-wide squares: its tiles are cards of natural height. */
 .grid {
+    --grid-gap: 21px;   /* px, not rem: the column steps below are px (1.5rem at the kit's 14px root) */
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-    grid-auto-rows: 280px;
-    gap: 1.5rem;
+    gap: var(--grid-gap);
+    /* inline-size containment: a .grid needs a block-level (full-width)
+       place, never a shrink-to-fit one — see section 15. */
+    container-type: inline-size;
 }
+.grid > * {
+    /* One-column cards are at least 150px tall — on the item, not the row,
+       so a row of small tiles (.tile-pack) keeps its own height. */
+    min-height: 150px;
+    --grid-cols: 1;
+    --grid-rows: 1;   /* rows the item spans — .large sets 2 */
+    --tile-size: calc((100cqw - (var(--grid-cols) - 1) * var(--grid-gap)) / var(--grid-cols));
+}
+/* n columns fit from n × 280px + (n − 1) × 21px.
+   From two columns on, every child is square (times its row span). */
+@container (width >= 581px) {
+    .grid > * {
+        --grid-cols: 2;
+        height: calc(var(--tile-size) * var(--grid-rows) + var(--grid-gap) * (var(--grid-rows) - 1));
+    }
+}
+@container (width >= 882px)  { .grid > * { --grid-cols: 3; } }
+@container (width >= 1183px) { .grid > * { --grid-cols: 4; } }
+@container (width >= 1484px) { .grid > * { --grid-cols: 5; } }
+@container (width >= 1785px) { .grid > * { --grid-cols: 6; } }
+@container (width >= 2086px) { .grid > * { --grid-cols: 7; } }
+@container (width >= 2387px) { .grid > * { --grid-cols: 8; } }
+@container (width >= 2688px) { .grid > * { --grid-cols: 9; } }
+@container (width >= 2989px) { .grid > * { --grid-cols: 10; } }
+@container (width >= 3290px) { .grid > * { --grid-cols: 11; } }
+@container (width >= 3591px) { .grid > * { --grid-cols: 12; } }
 
 .tile {
     position: relative;
@@ -1174,8 +1241,56 @@ a.nav-icon-btn { text-decoration: none; }
     transform: scale(1.1) rotate(5deg);
 }
 
-/* Variants */
-.tile.large { grid-column: span 2; }
+/* Variants — footprints: .wide 2 columns × 1 row, .large 2 × 2. */
+.tile.wide  { grid-column: span 2; }
+.tile.large { grid-column: span 2; grid-row: span 2; --grid-rows: 2; }
+/* One column: a span-2 tile would invent a phantom second column. */
+@container (width < 581px) {
+    .grid > .tile.wide,
+    .grid > .tile.large { grid-column: auto; grid-row: auto; --grid-rows: 1; }
+}
+/* .small — a quarter of a medium: up to four go in a .tile-pack, which
+   takes one medium cell and splits it 2×2 with the grid's own gap, so the
+   block lines up edge to edge with its neighbours. Icon only: the h2 stays
+   as the accessible name (visually hidden) — give the tile a title for the
+   tooltip. Small tiles stay small on phones; a one-column grid lays the
+   pack out as one row of four. */
+.tile-pack {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr;
+    gap: var(--grid-gap);
+    min-width: 0;
+}
+.grid > .tile-pack { min-height: 0; }
+@container (width < 581px) {
+    .grid > .tile-pack {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        grid-template-rows: auto;
+        align-self: start;
+    }
+    .tile-pack > .tile.small { aspect-ratio: 1; }
+}
+.tile.small {
+    padding: 0;
+    align-items: center;
+    justify-content: center;
+}
+.tile.small > sac-icon {
+    --icon-size: 40px;
+    margin: 0;
+}
+.tile.small h2 {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+}
+.tile.small p,
+.tile.small .tile-meta { display: none; }
 .tile.disabled {
     opacity: 0.5;
     cursor: not-allowed;
@@ -1187,29 +1302,12 @@ a.nav-icon-btn { text-decoration: none; }
     box-shadow: none;
     background: var(--tile);
 }
-.tile-badge {
-    position: absolute;
-    top: 24px;
-    right: 24px;
-    background: color-mix(in srgb, var(--danger) 15%, transparent);
-    color: color-mix(in srgb, var(--danger) 70%, var(--fg));
-    border: 1px solid color-mix(in srgb, var(--danger) 30%, transparent);
-    padding: 4px 10px;
-    border-radius: var(--radius-s);
-    font-size: 0.65rem;
-    font-weight: 800;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-}
-.tile-badge.accent {
-    background: var(--accent-fill);
-    color: var(--on-accent);
-    border-color: transparent;
-}
-
 @media (max-width: 768px), (max-height: 480px) and (pointer: coarse) {
-    .tile.large { grid-column: span 1; }
-    .grid { grid-auto-rows: 240px; }
+    /* Compact: every footprint collapses to medium — a 2×2 tile would own
+       a whole tablet screen. Tiles stay square while the grid has two or
+       more columns (section 15 re-steps --grid-cols for the smaller gap). */
+    .grid > .tile.wide,
+    .grid > .tile.large { grid-column: auto; grid-row: auto; --grid-rows: 1; }
 }
 
 /* --------------------------------------------------------------------------
@@ -1485,6 +1583,11 @@ canvas.natural {
     input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
     select { min-height: 44px; }
     input[type="checkbox"], input[type="radio"] { width: 20px; height: 20px; }
+    /* A cell editor stays in its cell (16px type, but no 44px floor). */
+    .cell-input:is(input, textarea):not([type="checkbox"]):not([type="radio"]):not([type="range"]) {
+        min-height: 0;
+        font-size: max(16px, 1em);
+    }
 }
 
 @media (max-width: 768px), (max-height: 480px) and (pointer: coarse) {
@@ -1494,11 +1597,20 @@ canvas.natural {
     .main-layout .hub-container { padding-top: 2rem; }
     .hub-container header { margin-bottom: 2rem; }
     .grid {
+        --grid-gap: 14px;
         grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
-        /* A 240px tile in a single column is mostly empty space. */
-        grid-auto-rows: minmax(150px, auto);
-        gap: 1rem;
     }
+    /* The square steps again for the 14px gap: n × 280px + (n − 1) × 14px.
+       Later in the file than the desktop steps, so these win. */
+    @container (width >= 574px) {
+        .grid > * {
+            --grid-cols: 2;
+            height: calc(var(--tile-size) * var(--grid-rows) + var(--grid-gap) * (var(--grid-rows) - 1));
+        }
+    }
+    @container (width >= 868px)  { .grid > * { --grid-cols: 3; } }
+    @container (width >= 1162px) { .grid > * { --grid-cols: 4; } }
+    @container (width >= 1456px) { .grid > * { --grid-cols: 5; } }
     .tile { padding: 1.5rem; }
     .card { padding: 1rem; }
     .center-shell {
@@ -1540,7 +1652,8 @@ canvas.natural {
    above it. The column tile spends most of its height on the 48px mark;
    as a row the launcher shows twice the tiles per screen. */
 @media (max-width: 480px) {
-    .grid { grid-auto-rows: auto; gap: 0.75rem; }
+    .grid { --grid-gap: 0.75rem; }
+    .grid > * { min-height: 0; }
     .tile {
         flex-direction: row;
         align-items: flex-start;
@@ -1554,5 +1667,7 @@ canvas.natural {
         flex: none;
     }
     .tile h2 { font-size: 1.15rem; }
+    .tile.small { flex-direction: column; align-items: center; justify-content: center; padding: 0; }
+    .tile.small > sac-icon { --icon-size: 32px; }
     .hub-container .intro-text { font-size: 1rem; }
 }

@@ -27,16 +27,39 @@
  *                 the bounds counts as invalid and never commits.
  *   week-start  — "1" (Monday, the calendar's default) or "0" (Sunday),
  *                 forwarded to the popover calendar.
+ *   format      — how the date is SHOWN and typed: "iso" (2026-09-25),
+ *                 "dmy." (25.09.2026), "dmy/" (25/09/2026), "mdy/"
+ *                 (09/25/2026). Absent = the page-wide sac.regional date
+ *                 format (default "iso"), followed live. `value`, min/max and
+ *                 sac:change stay ISO whatever the format. Typing is
+ *                 tolerant: single-digit day/month, a two-digit year
+ *                 (00–68 → 20xx, 69–99 → 19xx), any of . / - as separator,
+ *                 and an ISO date is always accepted — the rules of
+ *                 sac.regional.parseDate / formatDate, which show and read
+ *                 dates the same way outside a field. Formats other than
+ *                 ISO need lib/globals.js (sac.regional); without it the
+ *                 field is ISO-only.
  *   label       — text above the row, kit form-label styling. Absent/empty =
  *                 no label line at all. Also becomes the input's accessible name.
- *   placeholder — the input's placeholder. Default "yyyy-mm-dd".
+ *   placeholder — the input's placeholder. Default follows the format
+ *                 ("yyyy-mm-dd", "dd.mm.yyyy", …, translated).
  *   disabled    — greys the row out, blocks both the input and the button,
  *                 and closes the popover if it was open.
+ *   size        — "compact" (default: 28px row, small monospace — sidebars,
+ *                 settings panels) or "regular" (the metrics of a plain kit
+ *                 <input>: 0.6rem padding, the UI font with tabular digits,
+ *                 a calendar button as tall as the field) for a normal form.
+ *                 sac-time-field takes the same attribute, so a date + time
+ *                 pair stays one family. Touch sizing is the same for both.
+ *                 "cell" = the cell-editor contract (borderless, fills its
+ *                 container, no label; Alt+↓ opens the calendar; Enter /
+ *                 Escape / Tab per style guide → Cell editors).
  *
  * Properties:
  *   value — get/set, normalized ISO or "". Setting is programmatic: the input
  *           and an open popover update in place and NO event is fired (events
  *           mean "the user did this"). Never overwrites text mid-typing.
+ *   focus({ select }) — focuses the input; select: true selects its text.
  *
  * Events:
  *   sac:change — detail { value } — the normalized ISO (or "" when the
@@ -44,6 +67,7 @@
  *                     committed typed date, or a day picked in the calendar.
  *                     Bubbles + composed. The calendar's own event is stopped
  *                     at the boundary, so apps see exactly one.
+ *   sac:commit / sac:cancel — size="cell" only (style guide → Cell editors).
  *
  * Keyboard:
  *   on the button — Enter / Space / ArrowDown open the popover, focus moves
@@ -51,6 +75,8 @@
  *   in the input  — Enter commits and normalizes, Escape reverts to the last
  *                   valid value. Blurring with invalid text reverts too; while
  *                   invalid the text shows --danger with a 1px underline.
+ *
+ * CSS parts: label, input (the text box), well (the calendar button).
  *
  * CSS custom properties:
  *   --calendar-width — set on this field, forwarded to the popover's
@@ -75,7 +101,7 @@
 
 class SacDateField extends HTMLElement {
     static get observedAttributes() {
-        return ["value", "min", "max", "week-start", "label", "placeholder", "disabled"];
+        return ["value", "min", "max", "week-start", "format", "label", "placeholder", "disabled", "size"];
     }
 
     constructor() {
@@ -90,6 +116,8 @@ class SacDateField extends HTMLElement {
         this._popover = null;
         this._calendar = null;
         this._lowerTimer = null;   // top-layer exit, delayed past the fade
+        this._snapshot = "";       // value when focus entered (size="cell" cancel)
+        this._inside = false;
 
         this._onDocPointer = this._onDocPointer.bind(this);
         this._onDocKeydown = this._onDocKeydown.bind(this);
@@ -109,10 +137,17 @@ class SacDateField extends HTMLElement {
         // Runtime language switch: relabel in place (the popover calendar
         // relabels itself); typing, value and an open popover survive.
         if (window.sac && sac.lang && !this._offLang) this._offLang = sac.lang.onChange(() => this._relabel());
+        // Page-wide format switch: re-show in place (unless the field has its own).
+        if (window.sac && sac.regional && !this._offRegional) {
+            this._offRegional = sac.regional.onChange(() => {
+                if (!this.hasAttribute("format")) this._syncFormat();
+            });
+        }
     }
 
     disconnectedCallback() {
         if (this._offLang) { this._offLang(); this._offLang = null; }
+        if (this._offRegional) { this._offRegional(); this._offRegional = null; }
         this._closePopover(false);            // never leave a popover anchored to nothing
         if (this._lowerTimer != null) {
             clearTimeout(this._lowerTimer);
@@ -133,7 +168,9 @@ class SacDateField extends HTMLElement {
             case "week-start":  this._forward(name);       break;
             case "label":       this._syncLabel();         break;
             case "placeholder": this._syncPlaceholder();   break;
+            case "format":      this._syncFormat();        break;
             case "disabled":    this._syncDisabled();      break;
+            case "size":        this._syncSize();          break;
         }
     }
 
@@ -144,6 +181,12 @@ class SacDateField extends HTMLElement {
 
     get disabled() { return this.hasAttribute("disabled"); }
     set disabled(v) { if (v) this.setAttribute("disabled", ""); else this.removeAttribute("disabled"); }
+
+    focus(opts) {
+        if (!this._input) return super.focus(opts);
+        this._input.focus(opts);
+        if (opts && opts.select) this._input.select();
+    }
 
     /* ----------------------------------------------------------- date math */
 
@@ -171,6 +214,36 @@ class SacDateField extends HTMLElement {
         return `${pad(p.y, 4)}-${pad(p.m, 2)}-${pad(p.d, 2)}`;
     }
 
+    /** The active display format: own attribute, else sac.regional, else iso. */
+    _fmt() {
+        const own = this.getAttribute("format");
+        if (SacDateField.FORMATS.includes(own)) return own;
+        const reg = window.sac && sac.regional && sac.regional.get().date;
+        return SacDateField.FORMATS.includes(reg) ? reg : "iso";
+    }
+
+    /** Typed text → normalized ISO, "" or null. The rules are
+     *  sac.regional.parseDate's (one source for every date the kit reads);
+     *  without globals.js only ISO is understood. */
+    _parseTyped(str) {
+        const reg = window.sac && sac.regional && sac.regional.parseDate;
+        return reg ? sac.regional.parseDate(str, { format: this._fmt() }) : SacDateField._normalize(str);
+    }
+
+    /** ISO → the text shown in the input (sac.regional.formatDate). */
+    _display(iso) {
+        if (!iso) return "";
+        const reg = window.sac && sac.regional && sac.regional.formatDate;
+        return reg ? sac.regional.formatDate(iso, { format: this._fmt() }) : iso;
+    }
+
+    /** Format changed: re-show value and placeholder; half-typed text stays. */
+    _syncFormat() {
+        if (!this._input) return;
+        this._syncPlaceholder();
+        this._syncUI();
+    }
+
     /** Inclusive bounds check. Zero-padded ISO compares correctly as strings;
      *  an absent or unparseable bound simply does not constrain. */
     _inRange(iso) {
@@ -190,8 +263,18 @@ class SacDateField extends HTMLElement {
         this._syncLabel();
         this._syncPlaceholder();
         this._syncDisabled();
+        this._syncSize();
         this._reflect();
         this._syncUI();
+    }
+
+    _cell() { return this.getAttribute("size") === "cell"; }
+
+    /** Cell editors keep the calendar button out of the tab order: Tab
+     *  leaves the field (Alt+↓ and the mouse still open the calendar). */
+    _syncSize() {
+        if (this._cell()) this._well.tabIndex = -1;
+        else this._well.removeAttribute("tabindex");
     }
 
     /** Write the normalized ISO back to the attribute without re-entering.
@@ -236,7 +319,8 @@ class SacDateField extends HTMLElement {
     _syncUI() {
         if (!this._input) return;
         if (!this._dirty) {
-            if (this._input.value !== this._value) this._input.value = this._value;
+            const shown = this._display(this._value);
+            if (this._input.value !== shown) this._input.value = shown;
             this._input.classList.remove("invalid");
         }
         // Seed an open popover too — but never while the calendar is the one
@@ -252,7 +336,14 @@ class SacDateField extends HTMLElement {
     }
 
     _syncPlaceholder() {
-        this._input.placeholder = this.getAttribute("placeholder") || t("date-field.placeholder", "yyyy-mm-dd");
+        const own = this.getAttribute("placeholder");
+        if (own) { this._input.placeholder = own; return; }
+        const fmt = this._fmt();
+        this._input.placeholder =
+            fmt === "dmy." ? t("date-field.placeholder-dmy-dot",   "dd.mm.yyyy") :
+            fmt === "dmy/" ? t("date-field.placeholder-dmy-slash", "dd/mm/yyyy") :
+            fmt === "mdy/" ? t("date-field.placeholder-mdy-slash", "mm/dd/yyyy") :
+                             t("date-field.placeholder",           "yyyy-mm-dd");
     }
 
     /** Kit strings in the current language, on the existing nodes. */
@@ -330,6 +421,26 @@ class SacDateField extends HTMLElement {
                 }
                 .label[hidden] { display: none; }
 
+                /* size="regular": the plain kit <input> metrics (ui.css:
+                   0.6rem padding, the UI font at the input's UA size), the
+                   well one field-height square. 1lh = the field's line box. */
+                :host([size="regular"]) .date {
+                    padding: 0.6rem;
+                    font-family: inherit;
+                    font-size: 13.3333px;
+                    line-height: normal;
+                    font-variant-numeric: tabular-nums;
+                    width: 14ch;
+                }
+                :host([size="regular"]) .well {
+                    font-family: inherit;
+                    font-size: 13.3333px;
+                    line-height: normal;
+                    width: calc(1lh + 1.2rem + 2px);
+                    height: calc(1lh + 1.2rem + 2px);
+                    --icon-size: 17px;
+                }
+
                 .row {
                     display: flex;
                     align-items: center;
@@ -341,7 +452,7 @@ class SacDateField extends HTMLElement {
                     min-width: 0;
                     width: 13ch;
                     padding: 0.35rem 0.5rem;
-                    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+                    font-family: var(--font-mono);
                     font-size: 0.78rem;
                     color: var(--text);
                     background: var(--field);
@@ -450,11 +561,11 @@ class SacDateField extends HTMLElement {
                    coarse default mirrored here (see --calendar-width). */
                 @media (pointer: coarse) {
                     :host { --calendar-width: 320px; }
-                    .date {
+                    .date, :host([size="regular"]) .date {
                         min-height: 44px;
                         font-size: max(16px, 1rem);
                     }
-                    .well { width: 44px; height: 44px; }
+                    .well, :host([size="regular"]) .well { width: 44px; height: 44px; }
                 }
 
                 /* The calendar's own :host default would beat a value
@@ -465,6 +576,49 @@ class SacDateField extends HTMLElement {
                    unset case at 280px. */
                 .popover sac-calendar { --calendar-width: inherit; }
 
+                /* size="cell" — the cell-editor contract: borderless, fills
+                   the cell, the cell's font, no label, no own focus ring. */
+                :host([size="cell"]) {
+                    display: block;
+                    width: 100%;
+                    height: 100%;
+                    font: inherit;
+                    color: inherit;
+                }
+                :host([size="cell"]) .label { display: none; }
+                :host([size="cell"]) .row { height: 100%; gap: 0; }
+                :host([size="cell"]) .date,
+                :host([size="cell"]) .date:hover,
+                :host([size="cell"]) .date:focus {
+                    width: 100%;
+                    height: 100%;
+                    min-height: 0;
+                    padding: 0 0 0 var(--cell-padding-inline, 8px);
+                    font: inherit;
+                    font-variant-numeric: tabular-nums;
+                    color: inherit;
+                    background: transparent;
+                    border: 0;
+                    border-radius: 0;
+                    box-shadow: none;
+                }
+                :host([size="cell"]) .date.invalid { color: var(--danger-text); }
+                :host([size="cell"]) .well {
+                    width: auto;
+                    height: 100%;
+                    aspect-ratio: 1;
+                    max-width: 32px;
+                    background: transparent;
+                    border: 0;
+                    border-radius: 0;
+                    --icon-size: 14px;
+                }
+                :host([size="cell"]) .well:focus-visible { outline: none; color: var(--accent); }
+                @media (pointer: coarse) {
+                    :host([size="cell"]) .date { font-size: max(16px, 1em); }
+                    :host([size="cell"]) .well { width: auto; height: 100%; }
+                }
+
                 @media (prefers-reduced-motion: reduce) {
                     .popover,
                     .popover.open {
@@ -474,12 +628,12 @@ class SacDateField extends HTMLElement {
                     .date, .well { transition: none; }
                 }
             </style>
-            <label class="label" for="date" hidden></label>
+            <label class="label" part="label" for="date" hidden></label>
             <div class="row">
-                <input class="date" id="date" type="text" aria-label="${L.date}"
+                <input class="date" part="input" id="date" type="text" aria-label="${L.date}"
                        placeholder="${L.placeholder}" spellcheck="false"
                        autocomplete="off" autocapitalize="off">
-                <button class="well" id="well" type="button"
+                <button class="well" part="well" id="well" type="button"
                         aria-label="${L.choose}" aria-haspopup="dialog" aria-expanded="false">
                     <sac-icon name="calendar"></sac-icon>
                 </button>
@@ -510,6 +664,48 @@ class SacDateField extends HTMLElement {
         this._input.addEventListener("change", (e) => e.stopPropagation());
         this._input.addEventListener("keydown", (e) => this._onInputKeydown(e));
         this._input.addEventListener("blur", () => this._commit(true));
+
+        // Cell contract: remember the value focus arrived with, and stop
+        // the keys the field acted on at the boundary.
+        this.addEventListener("focusin", () => {
+            if (this._inside) return;
+            this._inside = true;
+            this._snapshot = this._value;
+        });
+        this.addEventListener("focusout", (e) => {
+            if (e.relatedTarget !== this) this._inside = false;
+        });
+        this.addEventListener("keydown", (e) => this._onCellKeydown(e));
+    }
+
+    /** size="cell", on the host (after the inner handlers ran). Enter/Escape
+     *  from the input are handled in _onInputKeydown; here: the button and
+     *  the popover's keys, and Tab from anywhere. */
+    _onCellKeydown(e) {
+        if (!this._cell()) return;
+        const path = e.composedPath();
+        const inPopover = this._popover && path.includes(this._popover);
+        if (e.key === "Tab") {                    // never swallowed
+            this._closePopover(false);
+            this._commit(true);
+        } else if (e.key === "Enter" && (inPopover || path.includes(this._well))) {
+            e.stopPropagation();                  // the popover / button took it; the NEXT Enter commits
+        } else if (e.key === "Escape" && path.includes(this._well)) {
+            e.preventDefault();
+            e.stopPropagation();
+            this._cancel();
+        }
+    }
+
+    _cancel() {
+        this._dirty = false;
+        this._closePopover(false);
+        this._apply(this._snapshot, false);
+        this._input.classList.remove("invalid");
+        this._input.focus();
+        this.dispatchEvent(new CustomEvent("sac:cancel", {
+            detail: { value: this._value }, bubbles: true, composed: true,
+        }));
     }
 
     /* ----------------------------------------------------------- text input */
@@ -517,12 +713,31 @@ class SacDateField extends HTMLElement {
     _onInput() {
         this._dirty = true;
         const t = this._input.value.trim();
-        const iso = SacDateField._normalize(t);
+        const iso = this._parseTyped(t);
         const bad = t !== "" && (iso == null || !this._inRange(iso));
         this._input.classList.toggle("invalid", bad);
     }
 
     _onInputKeydown(e) {
+        if (this._cell()) {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                e.stopPropagation();
+                if (this._commit(false)) {
+                    this.dispatchEvent(new CustomEvent("sac:commit", {
+                        detail: { value: this._value, shiftKey: e.shiftKey }, bubbles: true, composed: true,
+                    }));
+                }
+            } else if (e.key === "Escape" && !this._open) {
+                e.preventDefault();
+                e.stopPropagation();
+                this._cancel();
+            } else if (e.key === "ArrowDown" && e.altKey) {
+                e.preventDefault();
+                this._openPopover();
+            }
+            return;
+        }
         if (e.key === "Enter") {
             e.preventDefault();
             this._commit(false);
@@ -535,28 +750,29 @@ class SacDateField extends HTMLElement {
     /** @param {boolean} revertOnInvalid — true on blur, false on Enter (the
      *  user is still editing; leave the red text standing). */
     _commit(revertOnInvalid) {
-        if (!this._dirty) return;                 // nothing typed → never re-fire the old value
+        if (!this._dirty) return true;            // nothing typed → never re-fire the old value
         const t = this._input.value.trim();
         if (t === "") {                           // cleared by hand = a real user change
             this._dirty = false;
             this._input.classList.remove("invalid");
             this._apply("", true);
-            return;
+            return true;
         }
-        const iso = SacDateField._normalize(t);
+        const iso = this._parseTyped(t);
         if (iso == null || !this._inRange(iso)) {
             if (revertOnInvalid) this._revertInput();
-            return;
+            return false;
         }
         this._dirty = false;
         this._input.classList.remove("invalid");
         this._apply(iso, true);                   // _syncUI rewrites the text normalized
+        return true;
     }
 
     _revertInput() {
         this._dirty = false;
         this._input.classList.remove("invalid");
-        this._input.value = this._value;
+        this._input.value = this._display(this._value);
     }
 
     /* ------------------------------------------------------------ popover */
@@ -640,7 +856,7 @@ class SacDateField extends HTMLElement {
         this._popover.classList.remove("open");
         this._lower();
         this._well.setAttribute("aria-expanded", "false");
-        if (restoreFocus && document.activeElement === this) this._well.focus();
+        if (restoreFocus && document.activeElement === this) (this._cell() ? this._input : this._well).focus();
     }
 
     /* Top layer, exactly as sac-menu: a transformed or clipping ancestor would
@@ -712,6 +928,8 @@ class SacDateField extends HTMLElement {
         }
     }
 }
+
+SacDateField.FORMATS = ["iso", "dmy.", "dmy/", "mdy/"];
 
 customElements.define("sac-date-field", SacDateField);
 })();

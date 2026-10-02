@@ -40,6 +40,7 @@
         "lib/about.js",   // sac.about — the shared About window (a peer of sac.dialog)
         "lib/pan-zoom.js",
         "lib/apps.js",
+        "lib/app-bridge.js", // isolated apps: host half (the guest runtime app-guest.js is loaded by the frame, never here)
         "lib/hotkeys.js",
         "lib/sortable.js", // drag-reorder — filmstrip + layer list use it
         "lib/color.js",
@@ -47,6 +48,7 @@
         "lib/identity.js",// who is at this desktop (rides on the fs backend)
         "lib/files.js",   // the user's files — open / save (context.files)
         "lib/app.js",     // the app-side toolkit (apps.js is the host side)
+        "lib/showcase.js",// API-page helpers (pair with css/showcase.css) — docs pages only
 
         // components — any order, except where a comment says otherwise
         "components/sac-icon.js",
@@ -72,10 +74,14 @@
         // which builds a calendar inside its popover.
         "components/sac-calendar.js",
         "components/sac-date-field.js",
+        "components/sac-time-field.js",
+        "components/sac-number-field.js",
+        "components/sac-select.js",
 
         "components/sac-collapsible.js",
         "components/sac-drop-zone.js",
         "components/sac-file-browser.js",
+        "components/sac-quick-look.js",
         "components/sac-status-banner.js",
         "components/sac-loader.js",
         "components/sac-log.js",
@@ -103,6 +109,7 @@
         "components/sac-filmstrip.js",
         "components/sac-layer-list.js",
         "components/sac-shortcut-sheet.js",
+        "components/sac-shortcut-bar.js",
     ];
 
     let pending = files.length;
