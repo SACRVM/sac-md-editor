@@ -32,6 +32,10 @@
            so the demo shows what every host gets. */
         #editor { display: block; min-height: 420px; }
         .demo-actions { flex-wrap: wrap; margin-top: 1rem; }
+        /* The pane a bare editor fills - the frame is the demo's, not the editor's. */
+        .bare-pane { display: flex; flex-direction: column; height: 260px;
+                     border: 1px dashed var(--border); }
+        .bare-pane sac-md-editor { flex: 1; }
     </style>
 </head>
 <body class="app-page">
@@ -90,6 +94,7 @@
                 ${table("Attribute", [
                     ["placeholder", "Shown while the document is empty. Your string - translate it on your side."],
                     ["readonly", "Disables editing and hides the toolbar. A click or tap on a masked block reveals / hides it."],
+                    ["bare", "For an editor that is the whole pane: no frame, radius, background or focus ring, and the writing surface fills the host's height. Give the host one (a height, or <code>flex: 1</code> in a column); a click below the text puts the caret at the end."],
                 ])}
                 ${table("Property", [
                     ["value", "The markdown source, getter and setter. A programmatic set fires no event."],
@@ -113,6 +118,20 @@
                 <p>With the caret in a table, the toolbar's Table button opens a grid
                    dialog (<code>part="table-dialog"</code>) to add, delete and move columns
                    and rows and set alignment.</p>
+
+                <h2 id="bare-mode">Bare</h2>
+                <p>When the editor is the whole pane (a notes app) rather than a field in
+                   a form, <code>bare</code> drops the frame and lets the writing surface
+                   fill the host's height. Here in a 260px pane - the dashed line is the
+                   pane, not the editor:</p>
+                <div class="sg-demo">
+                    <div class="bare-pane">
+                        <sac-md-editor id="bare" bare placeholder="A sheet of paper..."></sac-md-editor>
+                    </div>
+                </div>
+                ${code(`<div style="display: flex; flex-direction: column; height: 100%">
+    <sac-md-editor bare style="flex: 1"></sac-md-editor>
+</div>`)}
 
                 <h2 id="blocks">Blocks</h2>
                 <p>The editor knows no block names of its own. A page registers them once on
@@ -194,6 +213,8 @@ off();                       // or Editor.unregisterBlock("note")`)}
                 "> line divs. Round-tripping is trivial because nothing is ever",
                 "> synthesized or deleted.",
             ].join("\n");
+            document.getElementById("bare").value =
+                "# A short note\n\nClick anywhere below it: the caret goes to the end.";
 
             document.getElementById("dump").addEventListener("click",
                 () => console.log(ed.value));

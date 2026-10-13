@@ -22,6 +22,12 @@
  * Attributes:
  *   placeholder - shown when the document is empty.
  *   readonly    - disables editing and hides the formatting toolbar.
+ *   bare        - for an editor that IS the pane (a notes app): no frame,
+ *                 radius, background or focus ring, and the writing surface
+ *                 fills the host's height (give the host one: a height, or
+ *                 flex: 1 in a column) instead of the 60vh minimum. A click
+ *                 in the empty area below the text puts the caret at the end.
+ *                 Without a host height the surface is as tall as its text.
  *
  * Properties:
  *   value - string; markdown source (getter + setter).
@@ -2817,6 +2823,27 @@ const TEMPLATE = `
     :host(.is-readonly) {
         background: transparent;
         border-color: transparent;
+    }
+    /* bare: the editor IS the pane (a notes app), not a field in a form -
+       a sheet of paper. No frame, and the writing surface fills the height
+       the host is given instead of the 60vh minimum, so the empty area
+       below a short note is still the editor. */
+    :host([bare]), :host([bare]:focus-within) {
+        display: flex;
+        flex-direction: column;
+        background: transparent;
+        border: 0;
+        border-radius: 0;
+        box-shadow: none;
+    }
+    :host([bare]) .toolbar {
+        flex: none;
+        background: transparent;
+        border-radius: 0;
+    }
+    :host([bare]) .editor {
+        flex: 1 0 auto;
+        min-height: 0;
     }
 
     .toolbar {

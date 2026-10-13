@@ -29,7 +29,7 @@ npx serve .        # http://localhost:3000 — the root page is the API page wit
 
 | Surface | |
 |---|---|
-| Attributes | `placeholder`, `readonly` |
+| Attributes | `placeholder`, `readonly`, `bare` (no frame; the writing surface fills the host's height — for an editor that is the whole pane) |
 | Property | `value` — the markdown source (getter + setter) |
 | Events | `sac:input` (once per edit) and `sac:change` (focus leaves after an edit), `detail: { value }`, bubbling, not composed — the kit convention. Native `input` / `change` still fire for older hosts |
 | Methods | `focus()` |

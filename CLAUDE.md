@@ -104,7 +104,7 @@ Those are host concerns. This component only does the visual layer.
 
 ## API surface (public contract — breaking it needs a version bump)
 
-Attributes `placeholder`, `readonly` · property `value` · events
+Attributes `placeholder`, `readonly`, `bare` · property `value` · events
 `sac:input` / `sac:change` (kit convention: `detail: { value }`, bubbles, not
 composed, never on a programmatic set; `sac:input` fires once per edit, only
 when the value changed) plus the legacy native `input` / `change` · method
