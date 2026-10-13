@@ -284,6 +284,13 @@ class SacMdEditor extends HTMLElement {
         }
         if (this._offLang) { this._offLang(); this._offLang = null; }
         LIVE_EDITORS.delete(this);
+        // Removed with the table dialog open: no close event comes, and a
+        // pending _td would keep selectionchange shut out after a reconnect.
+        // Drop it like a Cancel.
+        if (this._td) {
+            this._td = null;
+            this._tdlg.close();
+        }
     }
 
     /** Kit value events: detail { value }, bubbles, not composed. */
@@ -747,6 +754,9 @@ class SacMdEditor extends HTMLElement {
         // straight back in (#4). Read-only takes no focus and keeps its path.
         if (!this.hasAttribute("readonly") &&
             !this._editor.contains(this.shadowRoot.activeElement)) return;
+        // The table dialog is open, or closing the native way and its close
+        // event not yet in: _tdClosed puts the caret back, not the browser.
+        if (this._td) return;
         const sel = this._currentSelection();
         if (!sel || !sel.rangeCount) return;
         const range = sel.getRangeAt(0);
@@ -1690,10 +1700,34 @@ class SacMdEditor extends HTMLElement {
             if (i.dataset && i.dataset.r !== undefined) this._td.data[Number(i.dataset.r)][Number(i.dataset.c)] = i.value;
         });
         d.addEventListener("change", (e) => e.stopPropagation());
-        // Esc cancels the dialog (native) and goes no further.
-        d.addEventListener("keydown", (e) => { if (e.key === "Escape") e.stopPropagation(); });
-        // Enter in a cell submits the form = Apply; so does the button.
+        // Esc cancels and goes no further. Enter in a cell submits the form
+        // = Apply; so does the button. Both close through _tdClose, not the
+        // native way: see there.
+        d.addEventListener("keydown", (e) => {
+            if (e.key !== "Escape" || e.isComposing) return;
+            e.stopPropagation();
+            e.preventDefault();
+            this._tdClose("cancel");
+        });
+        d.querySelector("form").addEventListener("submit", (e) => {
+            e.preventDefault();
+            this._tdClose("apply");
+        });
+        // Anything else that closes it (a native close request that got
+        // through): same clean-up, a task later.
         d.addEventListener("close", () => this._tdClosed());
+    }
+
+    /** Close the dialog and put the editor back in the same task. close()
+     *  hands the focus back to the editor at once, with the caret on the
+     *  first line; the close event follows a task (in a throttled page,
+     *  much) later. Waiting for it let our selectionchange take that caret
+     *  for a move out of the table - line 1 activated, the table re-aligned
+     *  (an edit, on Cancel) and typing landing there until the event came. */
+    _tdClose(returnValue) {
+        if (!this._tdlg.open) return;
+        this._tdlg.close(returnValue);
+        this._tdClosed();
     }
 
     _tdLabels() {
@@ -1753,7 +1787,7 @@ class SacMdEditor extends HTMLElement {
         const swap = (arr, i, j) => { [arr[i], arr[j]] = [arr[j], arr[i]]; };
         let focus = null;
         switch (kind) {
-            case "cancel": this._tdlg.close("cancel"); return;
+            case "cancel": this._tdClose("cancel"); return;
             case "add-row":
                 data.push(aligns.map(() => ""));
                 focus = `input[data-r="${data.length - 1}"][data-c="0"]`;
