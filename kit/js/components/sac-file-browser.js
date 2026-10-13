@@ -70,6 +70,19 @@
  *                   hidden by default, like a desktop file manager. The
  *                   host binds it to its own toggle (a menu item, a key
  *                   chord). The ".folder" marker is never listed.
+ *   parent-row    — presence: a ".." row first in every folder below the
+ *                   root — going up is a row like any other (cursor onto it,
+ *                   Enter), the commander convention. Always first, whatever
+ *                   the sort, never hidden by the dot rule. It is not an
+ *                   entry: never marked (mark keys, Ctrl/Shift-click, select-
+ *                   all, mark mode skip it), deleted, renamed or dragged, and
+ *                   never in sac:choose / sac:select / sac:mark, `selected`,
+ *                   `marked` or `items`. Enter, a click or a double-click =
+ *                   up(); a drop on it drops into the parent folder. On it,
+ *                   `cursor` is null and sac:cursor says kind "parent". It
+ *                   is the one way up by pointer: the bar's Up button goes,
+ *                   and the current folder's icon (part="here") stands over
+ *                   the rows' icon column instead.
  *   delete-button — the per-row trash button: "cursor" (default) shows it
  *                   on the hovered row and on the cursor row, always on
  *                   touch; "hover" only on the row under a hovering pointer
@@ -91,14 +104,21 @@
  * Plain arrows move the cursor and keep the marks; a plain click clears them.
  * Changing folders clears them.
  *
- * Mark mode (`multiple`, for touch): a long-press on a row (touch or pen,
- * held still for 450ms — a swipe still scrolls) marks it and turns mark
- * mode on: a check box shows on every row, a tap toggles a row's mark
+ * Mark mode (`multiple`, for touch): the context menu's "Select" (a
+ * long-press on touch opens it — see Context menu) marks the row and turns
+ * mark mode on: a check box shows on every row, a tap toggles a row's mark
  * (folders too — nothing opens), Space toggles without a modifier, and the
  * bar trades Up / breadcrumb / New folder for "{n} selected" and Done. It
  * ends with Done, Esc, unmarking the last row, a folder change, or the
- * `selecting` property. Ending clears the marks. A long-press marks instead
- * of starting a row drag. Mouse and keyboard gestures above are unchanged.
+ * `selecting` property. Ending clears the marks. Mouse and keyboard
+ * gestures above are unchanged.
+ *
+ * Context menu (sac.contextMenu): right-click a row, long-press it on
+ * touch, or Shift+F10 / the Menu key on the cursor row. The cursor moves
+ * onto that row. Built in: "Select" first (`multiple`, an unmarked row),
+ * Open, and — not `readonly` — Rename and Delete (Delete acts on the marks
+ * when the row is one of several marked). The browser's own menu never
+ * shows on the list. Add or change entries with sac:context (below).
  *
  * Properties:
  *   store    — the sac.fs handle to browse. Setting it resets to the root
@@ -142,7 +162,8 @@
  *   sac:mark           — { paths }: the marks changed (user action, or
  *                        cleared by a folder change).
  *   sac:cursor         — { path, kind }: the row under the cursor changed
- *                        (a move, or the folder loading under it).
+ *                        (a move, or the folder loading under it). On the
+ *                        ".." row (parent-row): { path: null, kind: "parent" }.
  *   sac:selecting      — { selecting }: mark mode turned on or off — by a
  *                        long-press, Done, Esc, the last unmark, a folder
  *                        change (not by the property setter): show / hide a
@@ -163,6 +184,12 @@
  *                        preventDefault() and the host renames (then
  *                        refresh(), cursor = to).
  *   sac:rename         — { from, to, folder }: the built-in rename landed.
+ *   sac:context        — CANCELABLE, before a row's context menu opens:
+ *                        { path, kind, paths, items } — `paths` = what it
+ *                        acts on (the marks, or the row); `items` is the
+ *                        built-in list (sac.contextMenu items, each with
+ *                        its onClick) — push, splice or replace entries in
+ *                        place. preventDefault() = no menu.
  *   sac:drop           — { paths, target, copy, source } rows dragged from a
  *                        sac-file-browser (this one or another; `source` =
  *                        that element, null across documents), or { files,
@@ -176,7 +203,7 @@
  *                        while the stores match.
  *
  * Keyboard: ↑/↓ PgUp/PgDn Home/End move · Enter opens the folder /
- * chooses the file · Backspace or Alt+↑ goes up · Delete removes the marked
+ * chooses the file (on "..": goes up) · Backspace or Alt+↑ goes up · Delete removes the marked
  * rows or the cursor row (asks first; Shift = permanent in the event) ·
  * F2 renames · the mark keys above with `multiple`.
  *
@@ -196,7 +223,7 @@
  * unset = its buttons', 28px / 44px on touch — line it up with a host
  * footer); the
  * thumbnail checker is --checker-a/--checker-b. Rows expose
- * part="row file|folder [selected] [marked] [cursor]", so a host can style
+ * part="row file|folder|parent [selected] [marked] [cursor]", so a host can style
  * e.g. ::part(marked) itself; also part="delete" (the trash button),
  * "check" (the mark-mode box), "done" and "count" (the mark-mode bar).
  */
@@ -206,6 +233,8 @@
 
     // Keeps an empty folder alive. A dotted name no picker lists.
     const MARKER = ".folder";
+    // The ".." row's key in the row index — never a real path.
+    const PARENT = "\u0000..";
     // The dataTransfer type of a row drag between browsers.
     const DRAG_TYPE = "application/x-sac-file-paths";
     // The in-page drag in flight: dataTransfer data is unreadable during
@@ -218,7 +247,6 @@
     const PAD = 4;          // the list's own padding
     const OVERSCAN = 8;     // rows rendered beyond the viewport, each side
     const THUMB_JOBS = 4;   // thumbnails fetched at once
-    const LONG_PRESS_MS = 450;  // touch hold that starts mark mode
     const PRESS_SLOP = 10;      // px a held finger may drift before it is a scroll
 
     const ICON_ATTRS = 'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"';
@@ -324,7 +352,7 @@
 
     class SacFileBrowser extends HTMLElement {
         static get observedAttributes() {
-            return ["accept", "root-label", "readonly", "multiple", "sort", "sort-dir", "columns", "header", "no-thumbnails", "delete-button", "show-hidden"];
+            return ["accept", "root-label", "readonly", "multiple", "sort", "sort-dir", "columns", "header", "no-thumbnails", "delete-button", "show-hidden", "parent-row"];
         }
 
         constructor() {
@@ -356,6 +384,7 @@
 
         connectedCallback() {
             if (!this.shadowRoot.firstChild) this._render();
+            this._wireContext();
             if (this._store) this.refresh();
             if (window.sac && sac.lang && !this._offLang) this._offLang = sac.lang.onChange(() => this._relabel());
             // Page-wide date / time format switch: the date column repaints in place.
@@ -367,6 +396,7 @@
             }
         }
         disconnectedCallback() {
+            if (this._ctx) { this._ctx.destroy(); this._ctx = null; }
             this._revoke();
             if (this._offLang) { this._offLang(); this._offLang = null; }
             if (this._offRegional) { this._offRegional(); this._offRegional = null; }
@@ -431,7 +461,7 @@
                     this._head();
                     this._paint();
                     break;
-                default:                         // accept, root-label, readonly, show-hidden
+                default:                         // accept, root-label, readonly, show-hidden, parent-row
                     this._crumbs();
                     this._head();
                     if (this._store) this.refresh(); else this._paint();
@@ -470,7 +500,7 @@
             this._renderWindow(false);
         }
 
-        get cursor() { const r = this._rows[this._focus]; return r ? r.path : null; }
+        get cursor() { const r = this._rows[this._focus]; return r && r.kind !== "parent" ? r.path : null; }
         set cursor(p) {
             const i = this._index.get(String(p));
             if (i == null) { this._pendingCursor = p == null ? null : String(p); return; }
@@ -482,7 +512,8 @@
         }
 
         get items() {
-            return this._rows.map((r) => ({ kind: r.kind, path: r.path, name: r.name, stat: r.stat || null }));
+            return this._rows.filter((r) => r.kind !== "parent")
+                .map((r) => ({ kind: r.kind, path: r.path, name: r.name, stat: r.stat || null }));
         }
 
         get selecting() { return this._selecting; }
@@ -579,7 +610,7 @@
             if (this.hasAttribute("readonly") || !this._store) return false;
             const i = path == null ? this._focus : this._index.get(String(path));
             const r = i == null ? null : this._rows[i];
-            if (!r) return false;
+            if (!r || r.kind === "parent") return false;
             if (this._renaming) {
                 if (this._renaming.path === r.path) { this._renaming.el.querySelector("input.rename")?.focus(); return true; }
                 this._renaming.cancel();
@@ -682,13 +713,15 @@
             if (!store) { this._setRows([]); this._paint(); return; }
             const token = ++this._loadToken;
             const prefix = this._path ? this._path + "/" : "";
-            const prev = this.cursor;
             let listing;
             try { listing = await this._load(store, prefix); }
             catch (err) { console.error("[sac-file-browser] listing failed:", err); listing = { folders: [], files: [] }; }
             if (token !== this._loadToken) return;       // a newer load won
-            // A cursor asked for meanwhile (up(), rename, the setter) wins over the old row.
-            const keep = this._pendingCursor != null ? this._pendingCursor : prev;
+            // The cursor row as it is NOW, after the load — read before the
+            // await it lost a click, tap or arrow made meanwhile. A cursor
+            // asked for meanwhile (up(), rename, the setter) wins over it.
+            const r0 = this._rows[this._focus];
+            const keep = this._pendingCursor != null ? this._pendingCursor : (r0 ? r0.path : null);
             this._pendingCursor = null;
             const ok = acceptTest(this.getAttribute("accept"));
             // Dot entries stay out unless show-hidden asks for them.
@@ -707,7 +740,7 @@
                 .filter((s) => s && s.path && baseName(s.path) !== MARKER)
                 .map((s) => ({ kind: "file", name: s.name || baseName(s.path), path: s.path, stat: s }))
                 .filter((r) => shown(r.name) && ok({ name: r.name, type: r.stat.type }));
-            this._setRows(this._sorted(folders, files));
+            this._setRows(this._withParent(this._sorted(folders, files)));
             const hadMarks = this._marks.size > 0;
             for (const set of [this._sel, this._marks]) {
                 for (const p of Array.from(set)) if (!this._index.has(p)) set.delete(p);
@@ -730,6 +763,12 @@
             if (o && typeof o.entries === "function") return o.entries(store, prefix);
             if (typeof store.entries === "function") return store.entries(prefix);
             return foldList(store, prefix);
+        }
+
+        /** parent-row: the ".." row first, below the root only. */
+        _withParent(rows) {
+            if (!this._path || !this.hasAttribute("parent-row")) return rows;
+            return [{ kind: "parent", name: "..", path: PARENT, target: dirName(this._path), stat: null }, ...rows];
         }
 
         _setRows(rows) {
@@ -765,9 +804,9 @@
 
         _resort() {
             const cur = this.cursor;
-            this._setRows(this._sorted(
+            this._setRows(this._withParent(this._sorted(
                 this._rows.filter((r) => r.kind === "folder"),
-                this._rows.filter((r) => r.kind === "file")));
+                this._rows.filter((r) => r.kind === "file"))));
             const i = cur != null ? this._index.get(cur) : undefined;
             this._focus = i != null ? i : 0;
             this._anchor = null;
@@ -892,6 +931,23 @@
                         cursor: pointer;
                     }
                     .tool svg, .del svg { width: 16px; height: 16px; }
+                    /* parent-row: ".." is the one way up, so the Up button
+                       goes; the current folder's icon stands in its place,
+                       exactly over the rows' icon column (list border + pad +
+                       row inset), its name over theirs. */
+                    .here { display: none; }
+                    :host([parent-row]) .up { display: none; }
+                    :host([parent-row]) .here {
+                        flex: none;
+                        display: grid;
+                        place-items: center;
+                        width: 28px;
+                        height: 28px;
+                        margin-left: ${PAD + 7}px;
+                        margin-right: calc(0.6rem - 10px);
+                        color: var(--accent-text);
+                    }
+                    .here svg { width: 18px; height: 18px; }
                     .tool:hover:not(:disabled) { background: var(--hover); color: var(--text); }
                     .tool:disabled { opacity: 0.35; cursor: default; }
 
@@ -987,7 +1043,9 @@
                         overflow: hidden;
                     }
                     .box svg { width: 18px; height: 18px; }
-                    .row[data-kind="folder"] .box { color: var(--accent-text); }
+                    .row[data-kind="folder"] .box,
+                    .row[data-kind="parent"] .box { color: var(--accent-text); }
+                    .list.selecting .row[data-kind="parent"] .check { visibility: hidden; }
                     .box img {
                         width: 100%;
                         height: 100%;
@@ -1075,7 +1133,7 @@
                     }
                     .bar.selecting .count { display: block; }
                     .bar.selecting .done { display: grid; }
-                    .bar.selecting :is(.up, .crumbs, .mk) { display: none; }
+                    .bar.selecting :is(.up, .here, .crumbs, .mk) { display: none; }
                     :host([readonly]) .del,
                     :host([readonly]) .mk { display: none; }
                     .rename {
@@ -1161,6 +1219,7 @@
                     <button class="tool up" type="button" part="up"
                             title="${esc(t("files.up", "Up one folder"))}"
                             aria-label="${esc(t("files.up", "Up one folder"))}">${icon("chevron-up")}</button>
+                    <span class="here" part="here" aria-hidden="true">${icon("folder")}</span>
                     <slot name="title"></slot>
                     <nav class="crumbs" part="crumbs" aria-label="${esc(t("files.location", "Location"))}"></nav>
                     <span class="count" part="count" role="status"></span>
@@ -1180,8 +1239,9 @@
             sr.querySelector(".head").addEventListener("click", (e) => this._onHead(e));
             const list = sr.querySelector(".list");
             list.addEventListener("click", (e) => this._onClick(e));
-            // Touch long-press → mark mode. A move past the slop (a scroll) or
-            // a lift before the hold ends it; pointercancel is the scroll taking over.
+            // A held finger: the row must not turn into a native drag while
+            // the long-press opens its context menu. A move past the slop (a
+            // scroll) or a lift ends it; pointercancel is the scroll taking over.
             list.addEventListener("pointerdown", (e) => this._pressStart(e));
             list.addEventListener("pointermove", (e) => {
                 const p = this._press;
@@ -1189,8 +1249,7 @@
             });
             list.addEventListener("pointerup", () => this._pressEnd());
             list.addEventListener("pointercancel", () => this._pressEnd());
-            // A held finger would otherwise open the context menu / callout.
-            list.addEventListener("contextmenu", (e) => { if (this._press || this._eatClick) e.preventDefault(); });
+            this._wireContext();
             list.addEventListener("dblclick", (e) => {
                 if (this._selecting) return;
                 if (e.target.closest(".rename, .del")) return;
@@ -1383,6 +1442,16 @@
             el.className = "row";
             el.setAttribute("role", "option");
             el.dataset.kind = r.kind;
+            if (r.kind === "parent") {
+                // Not an entry: no drag, no delete, no meta, a box-less check.
+                el.draggable = false;
+                el.setAttribute("aria-label", t("files.parent", "Parent folder"));
+                el.innerHTML = `<span class="check" part="check" aria-hidden="true"></span>
+                    <span class="box">${icon("folder-up")}</span>
+                    <span class="name" title="${esc(t("files.parent", "Parent folder"))}">..</span>
+                    ${this._cols().map((c) => `<span class="meta ${c}"></span>`).join("")}`;
+                return el;
+            }
             el.draggable = true;
             const image = r.kind === "file" && /^image\//.test(r.stat.type || "");
             const kindIcon = r.kind === "folder" ? "folder" : image ? "image" : "document";
@@ -1494,19 +1563,20 @@
             const p = r ? r.path : null;
             if (p === this._lastCursor) return;
             this._lastCursor = p;
-            this._emit("sac:cursor", { path: p, kind: r ? r.kind : null });
+            this._emit("sac:cursor", { path: p === PARENT ? null : p, kind: r ? r.kind : null });
         }
 
         /** Marks = the marks before the range began + the range. */
         _markRange(a, b) {
             const [lo, hi] = a < b ? [a, b] : [b, a];
             this._marks = new Set(this._base || []);
-            for (let i = lo; i <= hi; i++) this._marks.add(this._rows[i].path);
+            for (let i = lo; i <= hi; i++) if (this._rows[i].kind !== "parent") this._marks.add(this._rows[i].path);
         }
 
         /** A toggle on empty marks starts from the selected file, as a
          *  Ctrl-click after a plain click always has. */
         _toggleMark(path) {
+            if (path === PARENT) return;
             if (!this._marks.size) for (const p of this._sel) if (this._index.has(p)) this._marks.add(p);
             if (this._marks.has(path)) this._marks.delete(path); else this._marks.add(path);
         }
@@ -1526,6 +1596,11 @@
             const i = +row.dataset.i;
             const r = this._rows[i];
             if (!r) return;
+            if (r.kind === "parent") {
+                if (this._selecting || e.ctrlKey || e.metaKey || e.shiftKey) return;
+                this.up();
+                return;
+            }
             const list = this.shadowRoot.querySelector(".list");
             const snap = this._snapshot();
             const multi = this.hasAttribute("multiple");
@@ -1566,7 +1641,7 @@
         /** Mark mode: toggle row i's mark; the last unmark ends the mode. */
         _tapMark(i) {
             const r = this._rows[i];
-            if (!r) return;
+            if (!r || r.kind === "parent") return;
             const snap = this._snapshot();
             if (this._marks.has(r.path)) this._marks.delete(r.path); else this._marks.add(r.path);
             this._focus = this._anchor = i;
@@ -1588,44 +1663,36 @@
             this._userMode(false);
         }
 
-        /* Touch long-press: a finger held still on a row. */
+        /* A finger held on a row: no native drag while it is down (Chrome's
+           touch drag-and-drop would take the long-press from the menu). */
         _pressStart(e) {
             this._eatClick = false;
             this._pressEnd();
             if (e.pointerType !== "touch" && e.pointerType !== "pen") return;
-            if (!this.hasAttribute("multiple") || e.button > 0 || this._renaming) return;
-            if (e.target.closest(".rename, .del")) return;
+            if (e.button > 0 || this._renaming || e.target.closest(".rename, .del")) return;
             const el = e.target.closest(".canvas > .row");
-            const r = el ? this._rows[+el.dataset.i] : null;
-            if (!r) return;
-            // A held row must not turn into a drag (Chrome's touch drag-and-drop).
+            if (!el) return;
             el.draggable = false;
-            this._press = {
-                id: e.pointerId, x0: e.clientX, y0: e.clientY, path: r.path, el,
-                timer: setTimeout(() => this._longPress(), LONG_PRESS_MS),
-            };
+            this._press = { id: e.pointerId, x0: e.clientX, y0: e.clientY, el };
         }
 
         _pressEnd() {
             const p = this._press;
             if (!p) return;
             this._press = null;
-            clearTimeout(p.timer);
-            if (!p.el.classList.contains("renaming")) p.el.draggable = true;
+            if (!p.el.classList.contains("renaming") && p.el.dataset.kind !== "parent") p.el.draggable = true;
         }
 
-        _longPress() {
-            const p = this._press;
-            if (!p) return;
-            clearTimeout(p.timer);
-            const i = this._index.get(p.path);
-            if (i == null) { this._pressEnd(); return; }
-            this._eatClick = true;       // the lift's click is not a tap
+        /** "Select" (the context menu): mark row i and turn mark mode on —
+         *  in mark mode already, toggle it like a tap. */
+        _startMarking(i) {
+            const r = this._rows[i];
+            if (!r || r.kind === "parent" || !this.hasAttribute("multiple")) return;
             if (this._selecting) { this._tapMark(i); return; }
             const snap = this._snapshot();
             // Mark mode's selection is its marks: leaving it leaves nothing selected.
             this._sel.clear();
-            this._marks.add(p.path);
+            this._marks.add(r.path);
             this._focus = this._anchor = i;
             this._base = new Set(this._marks);
             this._userMode(true);
@@ -1633,9 +1700,57 @@
             this._after(snap, false);
         }
 
+        /** The context menu (right-click, long-press, Shift+F10 / Menu key)
+         *  — while connected: its <sac-menu> lives in <body>. */
+        _wireContext() {
+            if (this._ctx || !window.sac || !sac.contextMenu || !this.shadowRoot.firstChild) return;
+            this._ctx = sac.contextMenu(this.shadowRoot.querySelector(".list"), {
+                targets: ".canvas > .row",
+                items: (row) => this._contextItems(row),
+                keyTarget: () => { const r = this._rows[this._focus]; return r ? this._els.get(r.path) || null : null; },
+            });
+        }
+
+        /** A row's context menu: the cursor moves onto it, then the built-in
+         *  entries — which the host may change through sac:context. */
+        _contextItems(rowEl) {
+            const i = +rowEl.dataset.i;
+            const r = this._rows[i];
+            if (!r || r.kind === "parent" || this._renaming) return null;
+            const snap = this._snapshot();
+            this._focus = i;
+            if (!this._marks.has(r.path)) {
+                this._anchor = i;
+                if (r.kind === "file" && !this._marks.size) this._sel = new Set([r.path]);
+            }
+            this._renderWindow(false);
+            this.shadowRoot.querySelector(".list").focus({ preventScroll: true });
+            this._after(snap, false);
+
+            const many = this._marks.has(r.path) && this._marks.size > 1;
+            const targets = many ? this._rows.filter((x) => this._marks.has(x.path)) : [r];
+            const items = [];
+            if (this.hasAttribute("multiple") && !this._marks.has(r.path)) {
+                items.push({ id: "select", label: t("contextmenu.select", "Select"), icon: "check",
+                             onClick: () => this._startMarking(this._index.get(r.path)) }, "-");
+            }
+            items.push({ id: "open", label: t("files.open", "Open"), icon: r.kind === "folder" ? "folder" : "document",
+                         disabled: many, onClick: () => this._activate(this._index.get(r.path)) });
+            if (!this.hasAttribute("readonly")) {
+                items.push({ id: "rename", label: t("files.rename", "Rename"), icon: "pencil",
+                             disabled: many, onClick: () => this.rename(r.path) });
+                items.push("-", { id: "delete", label: t("files.delete", "Delete"), icon: "trash", danger: true,
+                                  onClick: () => this._remove(targets, false) });
+            }
+            const detail = { path: r.path, kind: r.kind, paths: targets.map((x) => x.path), items };
+            if (!this._emit("sac:context", detail, true)) return null;
+            return detail.items;
+        }
+
         _activate(i) {
             const r = this._rows[i];
             if (!r) return;
+            if (r.kind === "parent") { this.up(); return; }
             if (r.kind === "folder") { this._go(r.path, true); return; }
             if (!this._marks.has(r.path)) {
                 const snap = this._snapshot();
@@ -1698,7 +1813,7 @@
                     e.preventDefault();
                     const targets = this._marks.size
                         ? this._rows.filter((r) => this._marks.has(r.path))
-                        : [this._rows[this._focus]].filter(Boolean);
+                        : [this._rows[this._focus]].filter((r) => r && r.kind !== "parent");
                     if (targets.length) this._remove(targets, e.shiftKey);
                     break;
                 }
@@ -1717,7 +1832,10 @@
                 case "a":
                 case "A":
                     if (!multi || !mod || e.altKey || e.shiftKey || !n) return;
-                    marks(() => { this._marks = new Set(this._rows.map((r) => r.path)); this._base = new Set(this._marks); });
+                    marks(() => {
+                        this._marks = new Set(this._rows.filter((r) => r.kind !== "parent").map((r) => r.path));
+                        this._base = new Set(this._marks);
+                    });
                     break;
                 case " ":
                     if (!this._rows[this._focus]) return;
@@ -1807,8 +1925,8 @@
         _dragStart(e) {
             const row = e.target.closest && e.target.closest(".canvas > .row");
             const r = row ? this._rows[+row.dataset.i] : null;
-            // A touch hold is a long-press (mark mode), never a drag.
-            if (!r || this._renaming || this._press || this._eatClick || !e.dataTransfer) { if (row) e.preventDefault(); return; }
+            // A touch hold is a long-press (mark mode), never a drag; ".." never.
+            if (!r || r.kind === "parent" || this._renaming || this._press || this._eatClick || !e.dataTransfer) { if (row) e.preventDefault(); return; }
             const paths = this._marks.has(r.path) ? this.marked : [r.path];
             e.dataTransfer.setData(DRAG_TYPE, JSON.stringify({ paths }));
             e.dataTransfer.setData("text/plain", paths.join("\n"));
@@ -1825,8 +1943,8 @@
             if (!internal && !types.includes("Files")) return null;
             const row = e.target.closest && e.target.closest(".canvas > .row");
             const r = row ? this._rows[+row.dataset.i] : null;
-            const onFolder = r && r.kind === "folder";
-            const target = onFolder ? r.path : this._path;
+            const onFolder = r && (r.kind === "folder" || r.kind === "parent");
+            const target = !onFolder ? this._path : r.kind === "parent" ? r.target : r.path;
             const copy = !internal || e.ctrlKey || e.altKey;
             if (internal && dragging && (dragging.source === this || dragging.source._store === this._store)) {
                 const paths = dragging.paths;
