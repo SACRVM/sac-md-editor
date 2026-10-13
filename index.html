@@ -58,7 +58,8 @@
                 <p class="lead">Obsidian-style live-preview markdown editing: the line your
                    caret sits on is raw source, every other line renders. No mode switch,
                    no build step. Needs <code>marked</code> and <code>DOMPurify</code> as
-                   globals - the kit ships both; this page runs on SACRVM APPKIT 2.24.0.</p>
+                   globals - the kit ships both; this page runs on SACRVM APPKIT
+                   <span id="kit-version">(see kit/VERSION)</span>.</p>
 
                 <div class="sg-demo">
                     <sac-md-editor id="editor" placeholder="Write some markdown..."></sac-md-editor>
@@ -159,6 +160,11 @@ off();                       // or Editor.unregisterBlock("note")`)}
 
                 ${compact("no separate phone layout. A tap puts the caret on a line and shows its source; in read-only mode a tap on a masked block reveals it.")}`;
             sac.showcase.watchCode(page);
+
+            // Read the vendored version so a re-vendor never leaves this text stale.
+            fetch("kit/VERSION").then(r => r.ok ? r.text() : Promise.reject())
+                .then(v => { document.getElementById("kit-version").textContent = v.trim(); })
+                .catch(() => {});
 
             const ed = document.getElementById("editor");
             ed.value = [
