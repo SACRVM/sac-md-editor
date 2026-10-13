@@ -734,6 +734,13 @@ class SacMdEditor extends HTMLElement {
     _handleSelectionChange() {
         if (this._suppressSelect) return;
         if (!this._editor) return;
+        // Focus has left the editor (for an input on the page, say): leave
+        // the caret alone. Firefox keeps the document selection in our lines
+        // after the focus moves on, and the blur's re-render shifts it onto
+        // the editor root - placing the caret from there pulls the focus
+        // straight back in (#4). Read-only takes no focus and keeps its path.
+        if (!this.hasAttribute("readonly") &&
+            !this._editor.contains(this.shadowRoot.activeElement)) return;
         const sel = this._currentSelection();
         if (!sel || !sel.rangeCount) return;
         const range = sel.getRangeAt(0);
