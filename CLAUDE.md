@@ -15,7 +15,9 @@ next release.
 
 **Zero build, forever.** No bundler, no TypeScript, no node_modules, no test
 framework build chain. Plain files + F5 is a hard ecosystem rule, not a
-temporary state. Dev loop: `npx serve .`, open the root page, edit, reload.
+temporary state. Dev loop: `python3 -m http.server 8765` (the Firepit
+command *Run site*; Node is not installed here), open the root page, edit,
+reload.
 
 ## The one invariant — everything else is negotiable
 

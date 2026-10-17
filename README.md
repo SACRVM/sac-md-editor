@@ -12,7 +12,7 @@ every other line shows rendered markdown with the syntax markers dimmed.
 ## Try it
 
 ```bash
-npx serve .        # http://localhost:3000 — the root page is the API page with a live demo
+python3 -m http.server 8765   # http://localhost:8765 — the root page is the API page with a live demo
 ```
 
 ## Use it
