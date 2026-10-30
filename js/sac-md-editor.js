@@ -3224,15 +3224,23 @@ const TEMPLATE = `
     }
 
     /* Setext underline (=== / --- under paragraph text): the paragraph
-       renders as the heading, the underline collapses to a sliver. */
-    .line.setext-underline:not(.active) {
+       renders as the heading, the underline collapses to a sliver - but
+       not while the caret is in that heading. The underline is half the
+       heading's source, and ArrowDown skips a 4px line, so collapsed it
+       could not be reached to edit. "That heading": an active
+       .setext-heading line before it with only heading lines between. */
+    .line.setext-underline:not(.active):is(:not(.setext-heading.active ~ *),
+                                           .setext-heading.active ~ :not(.setext-heading) ~ *) {
         min-height: 0;
         height: 4px;
         padding: 0;
         overflow: hidden;
     }
-    .line.setext-underline:not(.active) .block-marker { display: none; }
-    .line.setext-underline.active { color: var(--text-muted, #888); }
+    .line.setext-underline:not(.active):is(:not(.setext-heading.active ~ *),
+                                           .setext-heading.active ~ :not(.setext-heading) ~ *) .block-marker {
+        display: none;
+    }
+    .line.setext-underline { color: var(--text-muted, #888); }
 
     /* Link reference definition ([id]: url): metadata, not prose. */
     .line.linkdef {
