@@ -37,6 +37,7 @@
         .bare-pane { display: flex; flex-direction: column; height: 260px;
                      border: 1px dashed var(--border); }
         .bare-pane sac-md-editor { flex: 1; }
+        #link-log { color: var(--text-muted); font-size: 0.9em; margin: 0.5rem 0 0; min-height: 1.4em; }
     </style>
 </head>
 <body class="app-page">
@@ -72,6 +73,7 @@
                         <button class="btn" id="dump">Log value to console</button>
                         <button class="btn" id="ro">Toggle readonly</button>
                     </div>
+                    <p id="link-log">Ctrl/Cmd+click a link (a plain click in read-only) - its sac:link shows here.</p>
                 </div>
 
                 <h2 id="use">Use</h2>
@@ -96,6 +98,7 @@
                     ["placeholder", "Shown while the document is empty. Your string - translate it on your side."],
                     ["readonly", "Disables editing and hides the toolbar. A click or tap on a masked block reveals / hides it."],
                     ["bare", "For an editor that is the whole pane: no frame, radius, background or focus ring, and the writing surface fills the host's height. Give the host one (a height, or <code>flex: 1</code> in a column); a click below the text puts the caret at the end."],
+                    ["links", "<code>\"host\"</code>: relative hrefs (<code>../decisions/0003.md#why</code>) are links here, for you to open through <code>sac:link</code>. See <a href=\"#links\">Links</a>."],
                 ])}
                 ${table("Property", [
                     ["value", "The markdown source, getter and setter. A programmatic set fires no event."],
@@ -104,6 +107,7 @@
                     ["sac:input", "<code>detail { value }</code> once after every edit that changed the value (keystroke, paste, toolbar, undo/redo, table re-alignment). Bubbles, not composed."],
                     ["sac:change", "<code>detail { value }</code> when focus leaves after an edit. Bubbles, not composed."],
                     ["input / change", "Legacy native events, still fired for older hosts. <code>input</code> can arrive twice per keystroke."],
+                    ["sac:link", "<code>detail { href, text, raw, line }</code> when a link is followed: a click in read-only, Ctrl/Cmd+click while editing. Bubbles, composed, cancelable - <code>preventDefault()</code> keeps the editor from opening it. See <a href=\"#links\">Links</a>."],
                 ])}
                 ${table("Method", [
                     ["focus()", "Focuses the editing surface."],
@@ -171,6 +175,46 @@ off();                       // or Editor.unregisterBlock("note")`)}
                    read): blurred, with the eye toggle.</p>
                 ${note("<b>Security:</b> the blur is a courtesy against shoulder-surfing, not a security boundary. The plaintext stays in the DOM and in whatever you save from <code>value</code>. If secrets must stay out of an index, an agent or a wire, the host has to enforce that server-side. Do not build on the blur.")}
 
+                <h2 id="links">Links</h2>
+                <p>The editor follows web links (<code>http(s)</code>, <code>mailto</code>,
+                   <code>#</code>) on its own: a click in read-only, Ctrl/Cmd+click while
+                   editing, the caret line included. Every follow fires <code>sac:link</code>
+                   first; cancel it to open the link yourself. Your own link forms come in
+                   two ways: schemes and relative paths you allow, and inline forms you
+                   register.</p>
+                ${code(`const Editor = customElements.get("sac-md-editor");
+Editor.linkSchemes = ["note:", "wiki:"];   // page-wide: [x](note:01J...) is a link
+// <sac-md-editor links="host">            // per editor: [x](../a.md#why) is one too
+
+const off = Editor.registerInline({
+    name:   "wikilink",
+    match:  /\\[\\[([^\\[\\]\\n|]+?)(?:\\|([^\\[\\]\\n]+?))?\\]\\]/,
+    render: (m) => ({ text: m[2] || m[1], href: \`wiki:\${m[1]}\`, title: m[1] }),
+});
+
+editor.addEventListener("sac:link", (e) => {
+    const { href, text, raw, line } = e.detail;
+    if (!/^https?:/.test(href)) { e.preventDefault(); openRecord(href); }
+});`)}
+                ${table("Static", [
+                    ["linkSchemes", "Host schemes whose hrefs are links, page-wide (<code>javascript:</code>, <code>data:</code>, <code>vbscript:</code>, <code>file:</code>, <code>blob:</code> are refused). A host link goes nowhere unless you open it."],
+                    ["registerInline(def)", "Adds an inline link form for every editor on the page; returns an unregister function."],
+                    ["unregisterInline(name)", "Removes it again."],
+                    ["inlines", "The registered names."],
+                ])}
+                ${table("Definition", [
+                    ["name", "<code>a-z 0-9 -</code>, unique."],
+                    ["match", "A RegExp, tried at every position of a line's inline text."],
+                    ["render(m)", "Returns <code>{ text, href, title?, className? }</code>, or null for no link. <code>href</code> passes the same gate as any link, so a host scheme needs <code>linkSchemes</code>."],
+                    ["css", "Injected into every editor's shadow root. The anchor carries <code>.inline-&lt;name&gt;</code>."],
+                ])}
+                <p>The source stays the line's text: the shown text becomes the link and
+                   the rest of the match its hidden markers. Shown text that is not in the
+                   source (a title for an id) is drawn over the hidden source. Inline forms
+                   are left alone in code spans, code blocks and inside a link's text. An
+                   href the editor does not allow still looks like a link but goes
+                   nowhere.</p>
+
                 <h2 id="lang">Language</h2>
                 <p>The editor's own strings (toolbar, reveal toggle, link prompt, the
                    <code>:::secret</code> pill) follow <code>sac.lang</code> live, without
@@ -192,6 +236,8 @@ off();                       // or Editor.unregisterBlock("note")`)}
                 "",
                 "The line your **caret** sits on shows as raw markdown; every other",
                 "line renders. Try *italics*, `inline code`, and [links](https://example.com).",
+                "Wikilinks like [[Getting started]] and [[Getting started|this one]] are a",
+                "page registration; Ctrl/Cmd+click one (`[[in code]]` stays text).",
                 "",
                 "- Lists continue on Enter",
                 "- Enter on an empty item exits the list",
@@ -216,6 +262,22 @@ off();                       // or Editor.unregisterBlock("note")`)}
             ].join("\n");
             document.getElementById("bare").value =
                 "# A short note\n\nClick anywhere below it: the caret goes to the end.";
+
+            // The Links section's example, live: wikilinks and a host scheme.
+            // The demo has no records to open, so it shows what it was handed.
+            const Editor = customElements.get("sac-md-editor");
+            Editor.linkSchemes = ["wiki:"];
+            Editor.registerInline({
+                name:   "wikilink",
+                match:  /\[\[([^\[\]\n|]+?)(?:\|([^\[\]\n]+?))?\]\]/,
+                render: (m) => ({ text: m[2] || m[1], href: `wiki:${m[1]}`, title: m[1] }),
+            });
+            const log = document.getElementById("link-log");
+            ed.addEventListener("sac:link", (e) => {
+                const { href, text, raw, line } = e.detail;
+                log.textContent = `sac:link - href "${href}", text "${text}", raw "${raw}", line ${line}`;
+                if (href.startsWith("wiki:")) e.preventDefault();
+            });
 
             document.getElementById("dump").addEventListener("click",
                 () => console.log(ed.value));

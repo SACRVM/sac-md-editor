@@ -29,11 +29,11 @@ python3 -m http.server 8765   # http://localhost:8765 — the root page is the A
 
 | Surface | |
 |---|---|
-| Attributes | `placeholder`, `readonly`, `bare` (no frame; the writing surface fills the host's height — for an editor that is the whole pane) |
+| Attributes | `placeholder`, `readonly`, `bare` (no frame; the writing surface fills the host's height — for an editor that is the whole pane), `links="host"` (relative hrefs are links, for the host to open — see [Links](#links)) |
 | Property | `value` — the markdown source (getter + setter) |
-| Events | `sac:input` (once per edit) and `sac:change` (focus leaves after an edit), `detail: { value }`, bubbling, not composed — the kit convention. Native `input` / `change` still fire for older hosts |
+| Events | `sac:input` (once per edit) and `sac:change` (focus leaves after an edit), `detail: { value }`, bubbling, not composed — the kit convention. Native `input` / `change` still fire for older hosts. `sac:link` (a link is followed), `detail: { href, text, raw, line }`, bubbling, composed, cancelable — see [Links](#links) |
 | Methods | `focus()` |
-| Static | `registerBlock(def)` → unregister function · `unregisterBlock(name)` · `blocks` — see [Blocks](#blocks-registerblock) |
+| Static | `registerBlock(def)` → unregister function · `unregisterBlock(name)` · `blocks` — see [Blocks](#blocks-registerblock) · `registerInline(def)` → unregister function · `unregisterInline(name)` · `inlines` · `linkSchemes` — see [Links](#links) |
 | Keyboard | Ctrl/Cmd+B/I/K · Enter continues lists · Tab soft-tabs · Backspace merges lines · in a table: Tab / Shift+Tab move between cells, Enter adds a row, Esc leaves the table; the Table button in a table opens a grid dialog (add / delete / move columns and rows, alignment) |
 | Language | Follows the page language through the kit's `sac.t` / `sac.lang`, relabelled live; ships German, keys `md-editor.*` |
 
@@ -93,6 +93,43 @@ it after the editor.
 > security boundary. The plaintext remains in the DOM and in whatever you save
 > from `value`. If secrets must stay out of an index, an agent or a wire, the
 > host application has to enforce that server-side. Do not build on the blur.
+
+## Links
+
+The editor follows web links (`http(s)`, `mailto`, `#`) itself: a click in
+read-only, Ctrl/Cmd+click while editing — the caret line included, where the
+link under the pointer is looked up in the source. Every follow fires a
+cancelable `sac:link` first; `preventDefault()` and open it yourself.
+
+A host's own link forms come in two ways:
+
+```js
+const Editor = customElements.get("sac-md-editor");
+Editor.linkSchemes = ["note:", "wiki:"];   // page-wide: [x](note:01J…) is a link
+// <sac-md-editor links="host">            // per editor: [x](../a.md#why) is one too
+
+Editor.registerInline({                    // the inline twin of registerBlock
+    name:   "wikilink",
+    match:  /\[\[([^\[\]\n|]+?)(?:\|([^\[\]\n]+?))?\]\]/,
+    render: (m) => ({ text: m[2] || m[1], href: `wiki:${m[1]}`, title: m[1] }),
+});
+
+editor.addEventListener("sac:link", (e) => {
+    const { href, text, raw, line } = e.detail;
+    if (!/^https?:/.test(href)) { e.preventDefault(); openRecord(href); }
+});
+```
+
+A host link (an allowed scheme, or a relative href with `links="host"`) goes
+nowhere unless the host opens it. `javascript:`, `data:`, `vbscript:`,
+`file:` and `blob:` are refused as schemes. Any href the editor does not allow
+still looks like a link but has no target.
+
+A registered inline keeps the invariant: the shown text becomes the anchor,
+the rest of the match its hidden markers; shown text that is not in the source
+(a title for an id) is drawn over the hidden source. Inlines are left alone in
+code spans, code blocks and inside a link's text; the anchor carries
+`.inline-<name>`, and the definition's `css` is injected like a block's.
 
 ## Vendoring
 

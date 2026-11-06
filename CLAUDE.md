@@ -30,7 +30,7 @@ save/load round-trip trivial and the active/inactive line flip cheap.
 Any change that would make rendered output differ from `textContent` is wrong,
 even if it looks right on screen. When reviewing a patch, check this first.
 
-## Architecture tour (~3,000 lines, one file — on purpose, see roadmap)
+## Architecture tour (~4,000 lines, one file — on purpose, see roadmap)
 
 - **Line model**: one `div` per source line inside the shadow root. The caret
   line ("active") shows flat raw text; all other lines render.
@@ -70,6 +70,21 @@ even if it looks right on screen. When reviewing a patch, check this first.
   it). Registering re-derives every live editor (`refreshBlocks`), and a
   detached editor catches up on connect (`blockGen`). A throwing host
   `match` counts as no match.
+- **Inline registry and links**: `registerInline(def)` is the inline twin -
+  a host link form inside a line (`[[Title]]`). Each definition becomes a
+  marked inline extension (`inlineExt`, rebuilt in `refreshBlocks`): tried at
+  every position before marked's own rules, so a code span that starts first
+  still wins, and skipped inside a link's text (`lexer.state.inLink`). The
+  shown text becomes the anchor, the rest of the match `.marker.link-open` /
+  `.link-close`; text not in the source is generated content (`data-glyph`)
+  over the hidden source, like entities. Every href passes ONE gate,
+  `hrefKind`: "web" (http(s), mailto, #), "host" (`linkSchemes`, or a
+  relative href under `links="host"`) or "" (rendered without `href`).
+  DOMPurify's own URI check is rebuilt from `linkSchemes`
+  (`purifyConfigFor`), or it strips host schemes. The follow gesture (click
+  in read-only, Ctrl/Cmd+click editing) fires `sac:link`; on the caret line,
+  which has no anchors, `_linkAt` re-renders the line detached and looks up
+  the character under the pointer - the invariant makes the offsets agree.
 - **`:::secret`** is the registration in `js/sac-md-secret.js` - the demo loads
   it, hosts that want it load it after the editor.
 - **Delimiters** (in the secret registration): read `:{2,3}`, write `:::`. The two-colon form is what
@@ -96,7 +111,7 @@ months of daily production use there. The port renamed the tag
 (`fb-md-editor` → `sac-md-editor`) and internal classes; behaviour is
 unchanged. **Fishbowl vendors this repo** since 2026-09-25
 (`src/Fishbowl.Data/Resources/js/vendor/sac-md-editor/`, pinned commit in the
-`VERSION` file there, first pin 27b9e2e) - it is a consumer, so coordinate
+`VERSION` file there, first pin 27b9e2e, ded6384 as of 2026-11-06) - it is a consumer, so coordinate
 breaking changes with it. So is `SACRVM/markdown-pad` (`vendor/`).
 
 What deliberately did NOT move here: Fishbowl's secret *semantics* — the
@@ -106,16 +121,22 @@ Those are host concerns. This component only does the visual layer.
 
 ## API surface (public contract — breaking it needs a version bump)
 
-Attributes `placeholder`, `readonly`, `bare` · property `value` · events
+Attributes `placeholder`, `readonly`, `bare`, `links` (`"host"`) · property
+`value` · events
 `sac:input` / `sac:change` (kit convention: `detail: { value }`, bubbles, not
 composed, never on a programmatic set; `sac:input` fires once per edit, only
-when the value changed) plus the legacy native `input` / `change` · method
+when the value changed) plus the legacy native `input` / `change`, and the
+action event `sac:link` (`detail: { href, text, raw, line }`, bubbles,
+composed, cancelable - like the kit's `sac:split-back`) · method
 `focus()` · static
 `registerBlock(def)` → unregister fn, `unregisterBlock(name)`, `blocks`
 (definition fields: name, open/close or match, masked, toggle, label,
-className, color, css - see the header).
-Line classes `.block-*` are internal; a host styles its blocks through the
-definition's `css`. Keyboard: Ctrl/Cmd+B/I/K,
+className, color, css - see the header), `registerInline(def)` → unregister
+fn, `unregisterInline(name)`, `inlines` (fields: name, match, render → `{
+text, href, title, className }`, css), `linkSchemes` (get/set).
+Line classes `.block-*` and the link markers' `.link-open` / `.link-close`
+are internal; a host styles its blocks and inlines through the definition's
+`css` (an inline's anchor carries `.inline-<name>`). Keyboard: Ctrl/Cmd+B/I/K,
 Enter list continuation, empty-item list exit, Backspace line merge, Tab
 soft-tab, and in a table Tab / Shift+Tab cell navigation, Enter new row, Esc out, and
 the Table button opening the table dialog (`part="table-dialog"`)
@@ -152,7 +173,9 @@ why `sac:input` dedupes by value.
   top-of-file block accurate; the README quotes it.
 - Manual verification: run the demo, exercise caret movement across rendered
   lines, list continuation, a code fence containing `:::secret` (must stay
-  text), the reveal toggle, tables (Tab / Enter / leaving re-aligns), and a
+  text), the reveal toggle, tables (Tab / Enter / leaving re-aligns),
+  Ctrl/Cmd+click on a link and on a wikilink (rendered line and caret line;
+  the demo logs `sac:link` under the editor), and a
   copy/paste round-trip. There is no automated
   suite yet; if one lands, it must not drag in a build step.
 
