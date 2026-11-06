@@ -127,7 +127,9 @@
  *                        "#/<id>" — the address IS the open call, so a link
  *                        works as well as a click.
  *   close(id)            window: closes it (element + window stay in the DOM).
- *                        view: leaves the stage, back to the home section.
+ *                        view: leaves the stage, back to the home section. The
+ *                        address goes back to "#/" only while it still names
+ *                        the view; once it has moved on, it is left alone.
  *   remove(id)           unregister; if the app was created, calls its
  *                        unmount() (when present) and drops window or view.
  *                        Emits "sac:apps-changed".
@@ -141,6 +143,13 @@
  *                        replaceState, and — when any view app is registered —
  *                        routes the hash. Legacy compatibility: [data-overlay]
  *                        and ?tool= are honored the same way.
+ *                        options.tiles: false — no [data-app] click delegation
+ *                        (a shell that uses the attribute itself, or opens
+ *                        apps only from code). A hash that names no view (a
+ *                        sac.router page beside the views) parks the view on
+ *                        stage; it stays mounted for its next open. Recipe for
+ *                        views beside sac.router: the style guide, Helpers →
+ *                        sac.apps.
  *   inspect(url)         → Promise<manifest> — reads app.json, runs nothing.
  *                        Adds src, origin, manifestUrl and entryIntegrity
  *                        ("sha256-…" of the entry's bytes, or null when the
@@ -367,6 +376,7 @@
     const viewOpening = new Map();// id  → in-flight view creation Promise
     let stackOffset = 0;          // cascade multiple open windows slightly
     let inited = false;
+    let tilesBound = false;       // the document-wide [data-app] click delegation
     let hashBound = false;
     let viewHost  = null;         // element the view elements live in
     let homeEl    = null;         // shown while no view is on stage ("#/")
@@ -1388,7 +1398,13 @@
             return;
         }
         const manifest = registry.get(parsed.id);
-        if (!manifest || manifest.kind !== "view") return;
+        if (!manifest || manifest.kind !== "view") {
+            // The address names no view — another page of the shell (a
+            // sac.router route beside the views): the view on stage steps
+            // aside, kept for its next open.
+            if (activeId) goHome();
+            return;
+        }
         if (activeId === parsed.id) { deliverRoute(parsed.id, parsed.route); return; }
         openView(manifest, parsed.route).catch(() => {});
     }
@@ -1547,10 +1563,19 @@
 
     /* ------------------------------------------------- close / remove ---- */
 
+    /** A view leaves the stage. Back to the home address only while the
+     *  address still names it — once it has moved on (the user went to
+     *  another page of the shell), it stays where it is. */
+    function leaveView(id) {
+        const parsed = parseHash();
+        if (parsed && parsed.id === id) replaceHash(scopedHash("#/"));
+        goHome();
+    }
+
     function close(id) {
         const manifest = registry.get(id);
         if (manifest && manifest.kind === "view") {
-            if (activeId === id) { replaceHash(scopedHash("#/")); goHome(); }
+            if (activeId === id) leaveView(id);
             return;
         }
         const rec = windows.get(id);
@@ -1584,7 +1609,7 @@
             if (view.bridge) view.bridge.dispose(() => view.el.remove());
             else { unmountEl(id, view.el); view.el.remove(); }
             views.delete(id);
-            if (activeId === id) { replaceHash(scopedHash("#/")); goHome(); }
+            if (activeId === id) leaveView(id);
         }
         emitChanged(id, "remove");
     }
@@ -1750,8 +1775,12 @@
         }
         if (!baseTitle) baseTitle = document.title;
 
-        if (!inited) {
-            inited = true;
+        if (!inited) inited = true;
+        // init({ tiles: false }): no click delegation — a shell that uses
+        // [data-app] for something of its own (or opens apps only from code)
+        // keeps its clicks. A later init() without it binds it then.
+        if (!tilesBound && opts.tiles !== false) {
+            tilesBound = true;
             // Tiles: [data-app="<id>"] opens that app. Delegated, so tiles
             // rendered after init() work too. [data-overlay] is the legacy
             // spelling — same behavior. A hand-written tile is a full tile:

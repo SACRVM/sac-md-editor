@@ -447,8 +447,9 @@ class SacMdEditor extends HTMLElement {
 
     /** contenteditable and the kit's swipe opt-out travel together: a finger
      *  dragging across text being edited never starts a <sac-split> back
-     *  swipe (the split's own field selector misses "plaintext-only"); a
-     *  read-only editor is just text, so the swipe may start there. */
+     *  swipe or a <sac-nav> drawer swipe. Kit 2.33.3 skips "plaintext-only"
+     *  by itself, but a host runs on the kit it vendors, and older ones miss
+     *  it; a read-only editor is just text, so the swipe may start there. */
     _setEditable(on) {
         this._editor.setAttribute("contenteditable", on ? "plaintext-only" : "false");
         this._editor.toggleAttribute("data-no-swipe", on);
