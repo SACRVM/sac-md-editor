@@ -13,6 +13,7 @@ every other line shows rendered markdown with the syntax markers dimmed.
 
 ```bash
 python3 -m http.server 8765   # http://localhost:8765 — the root page is the API page with a live demo
+                              # http://localhost:8765/test/ — the round-trip tests
 ```
 
 ## Use it
@@ -30,10 +31,10 @@ python3 -m http.server 8765   # http://localhost:8765 — the root page is the A
 | Surface | |
 |---|---|
 | Attributes | `placeholder`, `readonly`, `bare` (no frame; the writing surface fills the host's height — for an editor that is the whole pane), `links="host"` (relative hrefs are links, for the host to open — see [Links](#links)) |
-| Property | `value` — the markdown source (getter + setter) |
+| Property | `value` — the markdown source (getter + setter). Lossless: what you set reads back unchanged; only `\r\n` and a lone `\r` read back as `\n` |
 | Events | `sac:input` (once per edit) and `sac:change` (focus leaves after an edit), `detail: { value }`, bubbling, not composed — the kit convention. Native `input` / `change` still fire for older hosts. `sac:link` (a link is followed), `detail: { href, text, raw, line }`, bubbling, composed, cancelable — see [Links](#links) |
 | Methods | `focus()` |
-| Static | `registerBlock(def)` → unregister function · `unregisterBlock(name)` · `blocks` — see [Blocks](#blocks-registerblock) · `registerInline(def)` → unregister function · `unregisterInline(name)` · `inlines` · `linkSchemes` — see [Links](#links) |
+| Static | `registerBlock(def)` → unregister function · `unregisterBlock(name)` · `blocks` — see [Blocks](#blocks-registerblock) · `registerInline(def)` → unregister function · `unregisterInline(name)` · `inlines` · `linkSchemes` — see [Links](#links) · `strikethrough` — see [Strikethrough](#strikethrough) |
 | Keyboard | Ctrl/Cmd+B/I/K · Enter continues lists · Tab soft-tabs · Backspace merges lines · in a table: Tab / Shift+Tab move between cells, Enter adds a row, Esc leaves the table; the Table button in a table opens a grid dialog (add / delete / move columns and rows, alignment) |
 | Language | Follows the page language through the kit's `sac.t` / `sac.lang`, relabelled live; ships German, keys `md-editor.*` |
 
@@ -55,7 +56,8 @@ The canonical document is the **concatenated `textContent` of the line divs**.
 Every transformation preserves `textContent` exactly — marker characters stay
 in the DOM and get wrapped, never synthesized or deleted. That is what makes
 the save/load round-trip trivial, and it is the property every change to this
-codebase must keep.
+codebase must keep. `test/index.html` pins it over a corpus of tricky lines;
+serve the repo and open `/test/`.
 
 ## Blocks (`registerBlock`)
 
@@ -130,6 +132,18 @@ the rest of the match its hidden markers; shown text that is not in the source
 (a title for an id) is drawn over the hidden source. Inlines are left alone in
 code spans, code blocks and inside a link's text; the anchor carries
 `.inline-<name>`, and the definition's `css` is injected like a block's.
+
+## Strikethrough
+
+GFM strikes `~x~` and `~~x~~` alike, so prose that uses a lone `~` for
+"about" — `~5 min (~10 at most)` — gets half a sentence struck through. One
+switch, page-wide:
+
+```js
+customElements.get("sac-md-editor").strikethrough = "double";   // ~~x~~ only; "gfm" is the default
+```
+
+Either way the tildes stay in the source; only the rendering changes.
 
 ## Vendoring
 

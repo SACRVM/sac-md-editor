@@ -27,6 +27,14 @@
     },
 
     {
+      "group": "Open",
+      "name": "tests",
+      "description": "The round-trip test page on the local server; its title says PASS or FAIL.",
+      "type": "url",
+      "url": "http://127.0.0.1:8765/test/"
+    },
+
+    {
       "group": "Git",
       "name": "repo",
       "description": "The repository on GitHub.",

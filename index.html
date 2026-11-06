@@ -72,6 +72,7 @@
                     <div class="toolbar demo-actions">
                         <button class="btn" id="dump">Log value to console</button>
                         <button class="btn" id="ro">Toggle readonly</button>
+                        <button class="btn" id="strike">Strikethrough: gfm</button>
                     </div>
                     <p id="link-log">Ctrl/Cmd+click a link (a plain click in read-only) - its sac:link shows here.</p>
                 </div>
@@ -101,7 +102,7 @@
                     ["links", "<code>\"host\"</code>: relative hrefs (<code>../decisions/0003.md#why</code>) are links here, for you to open through <code>sac:link</code>. See <a href=\"#links\">Links</a>."],
                 ])}
                 ${table("Property", [
-                    ["value", "The markdown source, getter and setter. A programmatic set fires no event."],
+                    ["value", "The markdown source, getter and setter. Lossless: what you set reads back unchanged, except that <code>\\r\\n</code> and a lone <code>\\r</code> read back as <code>\\n</code>. A programmatic set fires no event."],
                 ])}
                 ${table("Event", [
                     ["sac:input", "<code>detail { value }</code> once after every edit that changed the value (keystroke, paste, toolbar, undo/redo, table re-alignment). Bubbles, not composed."],
@@ -215,6 +216,14 @@ editor.addEventListener("sac:link", (e) => {
                    href the editor does not allow still looks like a link but goes
                    nowhere.</p>
 
+                <h2 id="strike">Strikethrough</h2>
+                <p>GFM strikes <code>~x~</code> and <code>~~x~~</code> alike, so prose that
+                   uses a lone <code>~</code> for "about" (<code>~5 min (~10 at most)</code>) gets
+                   half a sentence struck through. <code>"double"</code> strikes
+                   <code>~~x~~</code> only, like cmark-gfm's double-tilde option. Either way
+                   the tildes stay in the source.</p>
+                ${code(`Editor.strikethrough = "double";   // page-wide; "gfm" is the default`)}
+
                 <h2 id="lang">Language</h2>
                 <p>The editor's own strings (toolbar, reveal toggle, link prompt, the
                    <code>:::secret</code> pill) follow <code>sac.lang</code> live, without
@@ -238,6 +247,8 @@ editor.addEventListener("sac:link", (e) => {
                 "line renders. Try *italics*, `inline code`, and [links](https://example.com).",
                 "Wikilinks like [[Getting started]] and [[Getting started|this one]] are a",
                 "page registration; Ctrl/Cmd+click one (`[[in code]]` stays text).",
+                "~~Two tildes~~ strike. One each - about ~5 min (~10 at most) - strike too,",
+                "unless the Strikethrough button below switches to double-tilde only.",
                 "",
                 "- Lists continue on Enter",
                 "- Enter on an empty item exits the list",
@@ -283,6 +294,11 @@ editor.addEventListener("sac:link", (e) => {
                 () => console.log(ed.value));
             document.getElementById("ro").addEventListener("click",
                 () => ed.toggleAttribute("readonly"));
+            const strike = document.getElementById("strike");
+            strike.addEventListener("click", () => {
+                Editor.strikethrough = Editor.strikethrough === "gfm" ? "double" : "gfm";
+                strike.textContent = `Strikethrough: ${Editor.strikethrough}`;
+            });
         });
     </script>
 </body>

@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>sac-md-editor round-trip</title>
+    <!-- The invariant, pinned: ed.value = s; ed.value === s - right after the
+         set, with the caret moved through every line, and after the focus
+         leaves. Plain page, no build, no framework: serve the repo root and
+         open /test/. The verdict is in the page title too (PASS / FAIL), and
+         window.sacTest.done resolves with the results for a script. -->
+    <link rel="stylesheet" href="../kit/css/ui.css">
+    <script defer src="../kit/js/vendor/marked.min.js"></script>
+    <script defer src="../kit/js/vendor/purify.min.js"></script>
+    <script defer src="../js/sac-md-editor.js"></script>
+    <script defer src="../js/sac-md-secret.js"></script>
+    <style>
+        body { background: var(--bg, #0b0f1a); color: var(--fg, #e5e7eb); font: 15px/1.5 system-ui, sans-serif;
+               max-width: 960px; margin: 0 auto; padding: 24px 16px; }
+        h1 { font-size: 1.3rem; margin: 0 0 0.5rem; }
+        #summary { font-weight: 600; margin: 0 0 1rem; }
+        #summary.pass { color: var(--success, #22c55e); }
+        #summary.fail { color: var(--danger, #ef4444); }
+        sac-md-editor { margin: 0 0 1rem; }
+        .failure { border-left: 3px solid var(--danger, #ef4444); padding: 4px 12px; margin: 0 0 12px; }
+        .failure pre { white-space: pre-wrap; word-break: break-all; margin: 4px 0; font-size: 13px; }
+    </style>
+</head>
+<body>
+    <h1>sac-md-editor round-trip</h1>
+    <p id="summary">Running...</p>
+    <div id="failures"></div>
+    <sac-md-editor id="ed"></sac-md-editor>
+    <sac-md-editor id="ro" readonly></sac-md-editor>
+    <input id="outside" aria-label="Focus target outside the editor">
+
+<script>
+"use strict";
+
+// Every document is set, read back, walked with the caret line by line, and
+// read back after the focus leaves - in each strikethrough mode. Add a line
+// here whenever a round-trip bug is found.
+const CORPUS = [
+    // Tildes: single for "about", double for strikethrough, fences.
+    "costs ~\u20ac39/month or ~\u20ac32 a year",
+    "costs ~\u20ac39/month (~\u20ac32 a year)",
+    "a ~b~ c",
+    "a ~~b~~ c",
+    "~a~~b~ and ~~a~ b~~",
+    "x~y~z and ~ spaced ~ and a ~~~x~~~ b",
+    "\\~a~ and ~a\\~ and **~a~** and ~*a*~ and ~~**b**~~",
+    "~~~\ncode ~x~ and ~~y~~\n~~~",
+    "~~~~\n~~~\nstill code\n~~~~",
+    // Emphasis.
+    "**bold** and __bold__, *em* and _em_",
+    "***both*** and ___both___ and **a *b* c**",
+    "**a* and *a** and snake_case_word and 2*3*4",
+    "**a **b** c** and *a _b_ c*",
+    // Code spans.
+    "`code` and `` a ` b `` and ```x```",
+    "` a ` and `  ` and `a ` and `` `x` ``",
+    "`unterminated and ``also",
+    // Escapes and entities.
+    "\\*not em\\* and a \\\\ b and \\# and \\[x\\]",
+    "&amp; &lt; &copy; &#169; &#x1F600; &bogus; &#0;",
+    // Links.
+    "[text](https://example.com) and [t](https://example.com \"title\")",
+    "<https://example.com> and <me@example.com>",
+    "https://example.com/path?x=1. and www.example.com and me@example.com",
+    "[a](<url with spaces>) and [x](javascript:alert(1)) and [w](wiki:Home)",
+    "[ref][id] and [collapsed][] and [shortcut]\n\n[id]: https://example.com\n[collapsed]: /x\n[shortcut]: /y \"t\"",
+    "[[Getting started]] and [[Getting started|this one]] and `[[in code]]`",
+    "[outer [[inner]]](https://example.com)",
+    "![img](https://example.com/a.png) and ![x](data:image/png;base64,xx)",
+    // Inline HTML: escaped, never parsed.
+    "<b>bold</b> <script>alert(1)<\/script> <!-- c --> <span title=\"x\">y</span>",
+    // Breaks.
+    "two spaces  \nnext\nbackslash\\\nnext",
+    // Blocks.
+    "# Heading ~x~\n## Closed ##\n###### six",
+    "Setext\n===\n\nSetext two\n---",
+    "> quote **b**\n> > nested ~x~",
+    "- item ~x~\n  continued\n- [ ] task\n- [x] done\n1. one\n2) two",
+    "    indented code ~x~\n\n---\n***\n___",
+    // Tables.
+    "| a | ~b~ |\n|---|:-:|\n| `c|d` | \\| |\n| **e** | [f](https://example.com) |",
+    // Fences and blocks.
+    "```js\nconst a = ~1~ && `x`;\n```",
+    "~~~\n:::secret\n~~~",
+    ":::secret\nhidden ~x~ and **b**\n:::end",
+    "::secret\nold form\n::end",
+    // Whitespace and the rest.
+    "",
+    "\n\n",
+    "trailing spaces   \n\ttab\n   three",
+    "unicode \u00fc \u20ac \ud83d\ude00 and a zero-width\u200bspace",
+];
+
+// Line endings are the one normalisation: [set, reads back as].
+const EOL = [
+    ["a\r\nb\r\n\r\nc", "a\nb\n\nc"],
+    ["a\rb\r\rc",       "a\nb\n\nc"],
+    ["**a**\r\n~b~\r",  "**a**\n~b~\n"],
+];
+
+// What a line must or must not render as, per mode: [source, mode, selector,
+// present, text the element shows (optional)]. The line is the document's
+// first.
+const RENDER = [
+    ["` a ` b",                          "gfm",    "code", true, "a"],
+    ["`` a ` b ``",                      "gfm",    "code", true, "a ` b"],
+    ["a ~b~ c",                          "gfm",    "del", true],
+    ["a ~~b~~ c",                        "gfm",    "del", true],
+    ["a ~b~ c",                          "double", "del", false],
+    ["costs ~\u20ac39/month (~\u20ac32 a year)",   "gfm",    "del", true],
+    ["costs ~\u20ac39/month (~\u20ac32 a year)",   "double", "del", false],
+    ["a ~~b~~ c",                        "double", "del", true],
+    ["~~**b**~~",                        "double", "del strong", true],
+];
+
+// A macrotask that a hidden tab does not throttle the way it does timers.
+const tick = () => new Promise((r) => {
+    const ch = new MessageChannel();
+    ch.port1.onmessage = () => r();
+    ch.port2.postMessage(null);
+});
+const results = [];
+let done;
+window.sacTest = { done: new Promise((r) => { done = r; }), results };
+
+function record(ok, mode, step, src, actual) {
+    results.push({ ok, mode, step, src, actual });
+}
+
+async function roundTrip(ed, ro, outside, src, mode) {
+    ed.value = src;
+    record(ed.value === src, mode, "set", src, ed.value);
+    noFallback(ed, mode, "set", src);
+    ro.value = src;
+    record(ro.value === src, mode, "set (readonly)", src, ro.value);
+    // The caret onto each line and off it again. _editor and
+    // _placeCaretInLine are internals; a test may lean on them.
+    const lines = ed._editor.children;
+    for (let i = 0; i < lines.length; i++) {
+        ed.focus();
+        ed._placeCaretInLine(lines[i], Math.floor(lines[i].textContent.length / 2));
+        // What selectionchange would do, without waiting for it.
+        await null;
+        ed._handleSelectionChange();
+        await tick();
+        record(ed.value === src, mode, `caret on line ${i + 1}`, src, ed.value);
+    }
+    outside.focus();
+    await tick();
+    record(ed.value === src, mode, "focus left", src, ed.value);
+    noFallback(ed, mode, "focus left", src);
+}
+
+// A line the editor drew as plain source because its render would have
+// changed the text: the value survives, but that is a render bug.
+function noFallback(ed, mode, step, src) {
+    const lines = [...ed._editor.querySelectorAll(".line[data-fallback]")];
+    record(!lines.length, mode, `${step}: no line falls back to plain text`, src,
+           lines.map((l) => l.textContent));
+}
+
+async function renderChecks(ro, mode) {
+    for (const [src, m, selector, present, text] of RENDER) {
+        if (m !== mode) continue;
+        ro.value = src;
+        const line = ro._editor.children[0];
+        const el = line.querySelector(selector);
+        const ok = !!el === present && (text === undefined || (el && el.textContent === text));
+        record(ok, mode, `${present ? "renders" : "does not render"} ${selector}` +
+               (text === undefined ? "" : ` showing ${JSON.stringify(text)}`), src, line.innerHTML);
+    }
+    for (const [src, want] of EOL) {
+        ro.value = src;
+        record(ro.value === want, mode, `line endings read back as ${JSON.stringify(want)}`, src, ro.value);
+    }
+}
+
+function report() {
+    const failed = results.filter((r) => !r.ok);
+    const summary = document.getElementById("summary");
+    summary.textContent = failed.length
+        ? `${failed.length} of ${results.length} checks failed`
+        : `All ${results.length} checks passed`;
+    summary.className = failed.length ? "fail" : "pass";
+    document.title = `${failed.length ? "FAIL" : "PASS"} - sac-md-editor round-trip`;
+    const box = document.getElementById("failures");
+    for (const f of failed) {
+        const div = document.createElement("div");
+        div.className = "failure";
+        const head = document.createElement("div");
+        head.textContent = `${f.mode} - ${f.step}`;
+        const want = document.createElement("pre");
+        want.textContent = "source: " + JSON.stringify(f.src);
+        const got = document.createElement("pre");
+        got.textContent = "got:    " + JSON.stringify(f.actual);
+        div.append(head, want, got);
+        box.append(div);
+    }
+}
+
+// The deferred scripts run before DOMContentLoaded, this inline one before
+// them - so the element class is looked up here, not at the top.
+document.addEventListener("DOMContentLoaded", async () => {
+    const Editor = customElements.get("sac-md-editor");
+    const ed = document.getElementById("ed");
+    const ro = document.getElementById("ro");
+    const outside = document.getElementById("outside");
+    const before = Editor.strikethrough;
+    try {
+        // The same host setup as the demo: a host scheme and wikilinks, so
+        // registered inlines and host hrefs are on the path too.
+        Editor.linkSchemes = ["wiki:"];
+        Editor.registerInline({
+            name:   "wikilink",
+            match:  /\[\[([^\[\]\n|]+?)(?:\|([^\[\]\n]+?))?\]\]/,
+            render: (m) => ({ text: m[2] || m[1], href: `wiki:${m[1]}`, title: m[1] }),
+        });
+        for (const mode of ["gfm", "double"]) {
+            Editor.strikethrough = mode;
+            for (const src of CORPUS) await roundTrip(ed, ro, outside, src, mode);
+            await renderChecks(ro, mode);
+        }
+    } catch (err) {
+        record(false, "-", "threw", "", String(err && err.stack || err));
+    } finally {
+        Editor.strikethrough = before;
+    }
+    report();
+    done(results);
+});
+</script>
+</body>
+</html>

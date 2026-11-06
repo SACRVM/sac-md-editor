@@ -30,13 +30,26 @@ save/load round-trip trivial and the active/inactive line flip cheap.
 Any change that would make rendered output differ from `textContent` is wrong,
 even if it looks right on screen. When reviewing a patch, check this first.
 
-## Architecture tour (~4,000 lines, one file — on purpose, see roadmap)
+`test/index.html` pins it: a corpus of tricky documents, each set, read back,
+walked line by line with the caret and read back after the focus leaves, in
+both strikethrough modes. Found a round-trip bug? Add its line to the corpus
+first. At runtime `_renderLine` is the last line of defence: a render whose
+text differs from the source shows the plain source instead (`data-fallback`,
+which the test page reports). Line endings are the one normalisation: `\r\n`
+and a lone `\r` become `\n` on set and paste (the HTML parser would turn a
+`\r` inside a line into `\n` anyway).
+
+## Architecture tour (~4,100 lines, one file — on purpose, see roadmap)
 
 - **Line model**: one `div` per source line inside the shadow root. The caret
   line ("active") shows flat raw text; all other lines render.
 - **Inline rendering**: `marked.Lexer.lexInline` tokenizes; we walk the token
   tree ourselves and emit wrapped spans (`renderInline`). We do NOT use
-  marked's HTML renderer.
+  marked's HTML renderer. Markers come from `t.raw`, never from a constant
+  or `t.text`: `~` or `~~`, `*` or `_`, a code span's backtick run and the
+  padding space marked strips from `` ` a ` ``. `Editor.strikethrough =
+  "double"` hands the lexer a `marked.Tokenizer` whose `del` only accepts
+  `~~` (fresh per render, like the options object).
 - **Inline HTML policy**: escape-don't-parse, with DOMPurify as the second
   line of defence. User-typed `<script>` is text, always.
 - **Cross-line state**: `classifyLine(src, state, setext)` is the ONE place
@@ -133,7 +146,8 @@ composed, cancelable - like the kit's `sac:split-back`) · method
 (definition fields: name, open/close or match, masked, toggle, label,
 className, color, css - see the header), `registerInline(def)` → unregister
 fn, `unregisterInline(name)`, `inlines` (fields: name, match, render → `{
-text, href, title, className }`, css), `linkSchemes` (get/set).
+text, href, title, className }`, css), `linkSchemes` (get/set),
+`strikethrough` (get/set, `"gfm"` default or `"double"`).
 Line classes `.block-*` and the link markers' `.link-open` / `.link-close`
 are internal; a host styles its blocks and inlines through the definition's
 `css` (an inline's anchor carries `.inline-<name>`). Keyboard: Ctrl/Cmd+B/I/K,
@@ -176,8 +190,10 @@ why `sac:input` dedupes by value.
   text), the reveal toggle, tables (Tab / Enter / leaving re-aligns),
   Ctrl/Cmd+click on a link and on a wikilink (rendered line and caret line;
   the demo logs `sac:link` under the editor), and a
-  copy/paste round-trip. There is no automated
-  suite yet; if one lands, it must not drag in a build step.
+  copy/paste round-trip. The automated part is the round-trip page
+  `test/index.html` (open `/test/` on the dev server - the Firepit command
+  *Open tests*; the title says PASS or FAIL, `window.sacTest.done` resolves
+  with the results). It stays a plain page: no build step, no framework.
 
 ## Firepit inbox
 
