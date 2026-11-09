@@ -32,10 +32,11 @@ python3 -m http.server 8765   # http://localhost:8765 — the root page is the A
 |---|---|
 | Attributes | `placeholder`, `readonly`, `bare` (no frame; the writing surface fills the host's height — for an editor that is the whole pane), `links="host"` (relative hrefs are links, for the host to open — see [Links](#links)) |
 | Property | `value` — the markdown source (getter + setter). Lossless: what you set reads back unchanged; only `\r\n` and a lone `\r` read back as `\n` |
-| Events | `sac:input` (once per edit) and `sac:change` (focus leaves after an edit), `detail: { value }`, bubbling, not composed — the kit convention. Native `input` / `change` still fire for older hosts. `sac:link` (a link is followed), `detail: { href, text, raw, line }`, bubbling, composed, cancelable — see [Links](#links) |
-| Methods | `focus()` |
+| Events | `sac:input` (once per edit) and `sac:change` (focus leaves after an edit), `detail: { value }`, bubbling, not composed — the kit convention. Native `input` / `change` still fire for older hosts. `sac:link` (a link is followed), `detail: { href, text, raw, line }`, bubbling, composed, cancelable — see [Links](#links). `history-change` (`detail: { canUndo, canRedo }`, bubbling, composed) — drive your own Undo / Redo buttons from it |
+| Methods | `focus()` · `undo()` / `redo()` (a step is a word, a pause in typing, or one structural edit) · `canUndo()` / `canRedo()` |
 | Static | `registerBlock(def)` → unregister function · `unregisterBlock(name)` · `blocks` — see [Blocks](#blocks-registerblock) · `registerInline(def)` → unregister function · `unregisterInline(name)` · `inlines` · `linkSchemes` — see [Links](#links) · `strikethrough` — see [Strikethrough](#strikethrough) |
-| Keyboard | Ctrl/Cmd+B/I/K · Enter continues lists · Tab soft-tabs · Backspace merges lines · in a table: Tab / Shift+Tab move between cells, Enter adds a row, Esc leaves the table; the Table button in a table opens a grid dialog (add / delete / move columns and rows, alignment) |
+| Keyboard | Ctrl/Cmd+B/I/K · Enter continues lists · Backspace merges lines · Alt+Enter follows the link at the caret · Tab / Shift+Tab indent / outdent list items and code (over a selection: every line); anywhere else Tab moves the focus on, and Esc then Tab leaves from anywhere · in a table: Tab / Shift+Tab move between cells, Enter adds a row, Esc leaves the table; the Table button in a table opens a grid dialog (add / delete / move columns and rows, alignment) · the toolbar is one tab stop, arrow keys move in it |
+| Accessibility | The surface is a multi-line textbox named by the host's `aria-label` (else "Markdown text"), placeholder as `aria-placeholder`; in read-only a masked block's eye is a focusable toggle button. A task's box ticks on a click or tap while editing |
 | Language | Follows the page language through the kit's `sac.t` / `sac.lang`, relabelled live; ships German, keys `md-editor.*` |
 
 The editor's own strings (toolbar, reveal toggle, link prompt, the
@@ -100,7 +101,9 @@ it after the editor.
 
 The editor follows web links (`http(s)`, `mailto`, `#`) itself: a click in
 read-only, Ctrl/Cmd+click while editing — the caret line included, where the
-link under the pointer is looked up in the source. Every follow fires a
+link under the pointer is looked up in the source — Alt+Enter with the caret
+in a link, or the "Open" button that shows under the caret there (the way in
+on touch). Every follow fires a
 cancelable `sac:link` first; `preventDefault()` and open it yourself.
 
 A host's own link forms come in two ways:

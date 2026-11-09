@@ -6,7 +6,8 @@
     <title>sac-md-editor round-trip</title>
     <!-- The invariant, pinned: ed.value = s; ed.value === s - right after the
          set, with the caret moved through every line, and after the focus
-         leaves. Plain page, no build, no framework: serve the repo root and
+         leaves; plus the edits that once lost text (EDITS) keeping it.
+         Plain page, no build, no framework: serve the repo root and
          open /test/. The verdict is in the page title too (PASS / FAIL), and
          window.sacTest.done resolves with the results for a script. -->
     <link rel="stylesheet" href="../kit/css/ui.css">
@@ -118,6 +119,47 @@ const RENDER = [
     ["~~**b**~~",                        "double", "del strong", true],
 ];
 
+// Edits that must keep the text - each one once lost it: [what, document,
+// selection [line, offset, line, offset] or null, action, value after].
+const tab = (shiftKey = false) => (ed) => ed._editor.dispatchEvent(new KeyboardEvent("keydown",
+    { key: "Tab", shiftKey, bubbles: true, cancelable: true, composed: true }));
+const suggest = (text) => (ed) => {
+    const dt = new DataTransfer();
+    dt.setData("text/plain", text);
+    ed._editor.dispatchEvent(new InputEvent("beforeinput",
+        { inputType: "insertReplacementText", dataTransfer: dt, bubbles: true, cancelable: true, composed: true }));
+};
+const EDITS = [
+    ["Tab over selected list items indents each", "- a\n- b\n- c", [0, 0, 2, 3], tab(),
+     "  - a\n  - b\n  - c"],
+    ["Shift+Tab over selected list items outdents each", "- a\n  - b\n  - c", [1, 0, 2, 5], tab(true),
+     "- a\n- b\n- c"],
+    ["Tab over a selection in a paragraph leaves the text", "one two\nthree", [0, 2, 1, 3], tab(),
+     "one two\nthree"],
+    ["A spelling suggestion replaces the selected word", "a tset b", [0, 2, 0, 6], suggest("test"),
+     "a test b"],
+    ["A task box ticks and unticks", "- [ ] x\n- [x] y", null,
+     (ed) => { ed._toggleTask(ed._editor.children[0]); ed._toggleTask(ed._editor.children[1]); },
+     "- [x] x\n- [ ] y"],
+];
+
+async function editChecks(ed, mode) {
+    for (const [what, src, sel, act, want] of EDITS) {
+        ed.value = src;
+        if (sel) {
+            const [a, ao, b, bo] = sel;
+            const lines = ed._editor.children;
+            ed.focus();
+            ed._activateLine(lines[a], ao);
+            ed._selectLines(lines[a], ao, lines[b], bo);
+            await null;
+        }
+        act(ed);
+        await tick();
+        record(ed.value === want, mode, what, src, ed.value);
+    }
+}
+
 // A macrotask that a hidden tab does not throttle the way it does timers.
 const tick = () => new Promise((r) => {
     const ch = new MessageChannel();
@@ -224,6 +266,7 @@ document.addEventListener("DOMContentLoaded", async () => {
             Editor.strikethrough = mode;
             for (const src of CORPUS) await roundTrip(ed, ro, outside, src, mode);
             await renderChecks(ro, mode);
+            await editChecks(ed, mode);
         }
     } catch (err) {
         record(false, "-", "threw", "", String(err && err.stack || err));

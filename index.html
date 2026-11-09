@@ -108,16 +108,22 @@
                     ["sac:input", "<code>detail { value }</code> once after every edit that changed the value (keystroke, paste, toolbar, undo/redo, table re-alignment). Bubbles, not composed."],
                     ["sac:change", "<code>detail { value }</code> when focus leaves after an edit. Bubbles, not composed."],
                     ["input / change", "Legacy native events, still fired for older hosts. <code>input</code> can arrive twice per keystroke."],
-                    ["sac:link", "<code>detail { href, text, raw, line }</code> when a link is followed: a click in read-only, Ctrl/Cmd+click while editing. Bubbles, composed, cancelable - <code>preventDefault()</code> keeps the editor from opening it. See <a href=\"#links\">Links</a>."],
+                    ["sac:link", "<code>detail { href, text, raw, line }</code> when a link is followed: a click in read-only, Ctrl/Cmd+click while editing, Alt+Enter or the Open button under the caret in a link. Bubbles, composed, cancelable - <code>preventDefault()</code> keeps the editor from opening it. See <a href=\"#links\">Links</a>."],
+                    ["history-change", "<code>detail { canUndo, canRedo }</code> whenever either may have changed. Bubbles, composed - drive your own Undo / Redo buttons from it."],
                 ])}
                 ${table("Method", [
                     ["focus()", "Focuses the editing surface."],
+                    ["undo() / redo()", "One step back / forward. A step is a word, a run of typing ended by a pause, or one structural edit (Enter, paste, toolbar, Tab, table)."],
+                    ["canUndo() / canRedo()", "Whether there is a step to take."],
                 ])}
                 ${table("Keyboard", [
                     ["Ctrl/Cmd+B / I / K", "Bold / italic / link."],
                     ["Enter", "Splits the line; continues <code>- * + 1. 1)</code> lists. On an empty item it leaves the list."],
                     ["Backspace", "At the start of a line: merges it into the line above."],
-                    ["Tab", "Two-space soft tab."],
+                    ["Alt+Enter", "Follows the link at the caret (also: the Open button under it)."],
+                    ["Tab / Shift+Tab", "In a list item: indent / outdent it; in code: two spaces / outdent; over a selection: every line. Anywhere else Tab moves the focus on, like in any field."],
+                    ["Esc, then Tab", "Leaves the editor from anywhere (Esc itself still reaches your page)."],
+                    ["Arrow keys (toolbar)", "The toolbar is one tab stop; Left / Right / Home / End move between its buttons. A button pressed from the keyboard acts at the caret."],
                     ["Tab / Shift+Tab (table)", "Next / previous cell; past the last cell adds a row."],
                     ["Enter / Esc (table)", "Enter adds a row below (on an empty row it leaves); Esc leaves the table. Leaving re-aligns the pipes - an undoable edit."],
                 ])}
@@ -179,7 +185,8 @@ off();                       // or Editor.unregisterBlock("note")`)}
                 <h2 id="links">Links</h2>
                 <p>The editor follows web links (<code>http(s)</code>, <code>mailto</code>,
                    <code>#</code>) on its own: a click in read-only, Ctrl/Cmd+click while
-                   editing, the caret line included. Every follow fires <code>sac:link</code>
+                   editing, the caret line included, or Alt+Enter / the Open button with the
+                   caret in a link (the way in on touch). Every follow fires <code>sac:link</code>
                    first; cancel it to open the link yourself. Your own link forms come in
                    two ways: schemes and relative paths you allow, and inline forms you
                    register.</p>

@@ -16,7 +16,7 @@ next release.
 **Zero build, forever.** No bundler, no TypeScript, no node_modules, no test
 framework build chain. Plain files + F5 is a hard ecosystem rule, not a
 temporary state. Dev loop: `python3 -m http.server 8765` (the Firepit
-command *Run site*; Node is not installed here), open the root page, edit,
+command *Run site*; Node exists here only for `node --check`), open the root page, edit,
 reload.
 
 ## The one invariant — everything else is negotiable
@@ -141,7 +141,9 @@ composed, never on a programmatic set; `sac:input` fires once per edit, only
 when the value changed) plus the legacy native `input` / `change`, and the
 action event `sac:link` (`detail: { href, text, raw, line }`, bubbles,
 composed, cancelable - like the kit's `sac:split-back`) · method
-`focus()` · static
+`focus()`, `undo()` / `redo()` / `canUndo()` / `canRedo()` plus the
+`history-change` event (`detail: { canUndo, canRedo }`, bubbles, composed -
+Fishbowl and markdown-pad drive their own Undo / Redo buttons from it) · static
 `registerBlock(def)` → unregister fn, `unregisterBlock(name)`, `blocks`
 (definition fields: name, open/close or match, masked, toggle, label,
 className, color, css - see the header), `registerInline(def)` → unregister
@@ -151,8 +153,11 @@ text, href, title, className }`, css), `linkSchemes` (get/set),
 Line classes `.block-*` and the link markers' `.link-open` / `.link-close`
 are internal; a host styles its blocks and inlines through the definition's
 `css` (an inline's anchor carries `.inline-<name>`). Keyboard: Ctrl/Cmd+B/I/K,
-Enter list continuation, empty-item list exit, Backspace line merge, Tab
-soft-tab, and in a table Tab / Shift+Tab cell navigation, Enter new row, Esc out, and
+Enter list continuation, empty-item list exit, Backspace line merge, Alt+Enter
+follows the link at the caret, Tab / Shift+Tab indent / outdent list items and
+code (a selection: every line) and otherwise move the focus on - Tab is
+never a trap; Esc then Tab leaves from anywhere - the toolbar one tab stop
+(roving tabindex), and in a table Tab / Shift+Tab cell navigation, Enter new row, Esc out, and
 the Table button opening the table dialog (`part="table-dialog"`)
 (leaving a table re-aligns its pipes - a source edit that fires `input`).
 i18n keys `md-editor.*` (hosts may add languages under them, so
