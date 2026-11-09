@@ -194,8 +194,8 @@ commit in its vendor `VERSION`, markdown-pad copies the two files). MAJOR
 for a break of the API surface above (agree it with the consumers first),
 MINOR for behaviour writers or hosts will notice, PATCH for fixes. After a
 release, tell Fishbowl and markdown-pad through the Firepit inbox. The first
-tag, v1.0.0, was set afterwards on baa8a4b (2026-11-06), the state the
-consumers had pinned.
+release is v1.1.0 (2026-11-09); before it consumers pinned plain commits
+(baa8a4b as of 2026-11-06), which count as 1.0.
 
 ## Conventions
 
