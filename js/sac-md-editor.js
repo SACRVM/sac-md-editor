@@ -106,7 +106,11 @@
  *
  * Toolbar: one tab stop (role="toolbar"); Left / Right / Home / End move
  * between its buttons. A button pressed from the keyboard acts where the
- * caret was and hands the focus back to the text.
+ * caret was and hands the focus back to the text. It is sticky at the top
+ * of whatever scrolls the editor; a host with a bar over that scroller moves
+ * it below the bar with ::part(toolbar) { top: ... }. Inside a kit sac-split,
+ * whose back bar covers the detail pane's top on narrow screens:
+ *   sac-md-editor::part(toolbar) { top: var(--split-back-height, 0px); }
  *
  * Accessibility: the writing surface is a multi-line textbox named by the
  * host's aria-label (else "Markdown text"), with the placeholder as
@@ -3891,7 +3895,8 @@ const TEMPLATE = `
 
     /* The toolbar stays in reach while a long note scrolls under it: sticky
        at the top of whatever scrolls the page (a host with a header over
-       that sets ::part(toolbar) { top: ... }). At rest it looks as it
+       that sets ::part(toolbar) { top: ... }, in a sac-split
+       var(--split-back-height, 0px)). At rest it looks as it
        always did; stuck, it gets the kit's glass behind its buttons (a
        scroll-state query; where that is not supported the blur alone keeps
        them legible over the text passing beneath). */

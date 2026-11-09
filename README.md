@@ -51,6 +51,15 @@ Styling is Shadow-DOM-scoped but driven by the kit's seed tokens
 the editor rethemes with the page in light and dark. It works without the kit
 too — every token read has a dark fallback, or define the properties yourself.
 
+The toolbar stays at the top of whatever scrolls the editor. A bar of yours
+over that scroller pushes it down with `::part(toolbar) { top: … }`; inside a
+kit `sac-split`, whose back bar covers the detail pane's top on narrow
+screens, that is
+
+```css
+sac-md-editor::part(toolbar) { top: var(--split-back-height, 0px); }
+```
+
 ## The one invariant
 
 The canonical document is the **concatenated `textContent` of the line divs**.

@@ -93,6 +93,12 @@
                    <code>--text</code>, <code>--border</code>, ...), so the editor rethemes
                    with the page in light and dark. Every token has a dark fallback, so it
                    also runs without the kit.</p>
+                <p>The toolbar stays at the top of whatever scrolls the editor. A bar of
+                   yours over that scroller pushes it down with
+                   <code>::part(toolbar) { top: ... }</code>; inside a kit
+                   <code>sac-split</code>, whose back bar covers the detail pane's top on
+                   narrow screens, that is
+                   <code>sac-md-editor::part(toolbar) { top: var(--split-back-height, 0px); }</code>.</p>
 
                 <h2 id="api">API</h2>
                 ${table("Attribute", [
