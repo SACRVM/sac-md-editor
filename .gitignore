@@ -11,3 +11,7 @@
 .claude/agent-memory/
 .firepit/artifacts.json
 .firepit/knowledge-pinned.md
+
+# Local MCP config (Firepit): per machine, not project material.
+# Commit it only if a server in it is needed to run this repo.
+.mcp.json
