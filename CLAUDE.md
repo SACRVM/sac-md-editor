@@ -185,6 +185,18 @@ why `sac:input` dedupes by value.
 3. **Split the file** — upstream's own review called 2,092 lines in one file a
    wart. Only after 1 and 2; splitting first would make both harder to review.
 
+## Releases
+
+Semver tags `vX.Y.Z` on master, each with a GitHub release whose notes say
+what changed for writers and for hosts. No build, no zip: a release is the
+tree at its tag, and consumers copy `js/` from it (Fishbowl records the
+commit in its vendor `VERSION`, markdown-pad copies the two files). MAJOR
+for a break of the API surface above (agree it with the consumers first),
+MINOR for behaviour writers or hosts will notice, PATCH for fixes. After a
+release, tell Fishbowl and markdown-pad through the Firepit inbox. The first
+tag, v1.0.0, was set afterwards on baa8a4b (2026-11-06), the state the
+consumers had pinned.
+
 ## Conventions
 
 - English and ASCII in source and comments.

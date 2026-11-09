@@ -150,6 +150,12 @@ Either way the tildes stay in the source; only the rendering changes.
 
 ## Vendoring
 
+Releases are tags (`v1.1.0`, ...) with notes on the
+[releases page](https://github.com/SACRVM/sac-md-editor/releases): copy
+`js/sac-md-editor.js` (and `js/sac-md-secret.js` if you use it) from the tag
+you want. A minor version changes behaviour you or your writers will notice;
+a major one breaks the API above.
+
 `kit/` is the vendored SACRVM APPKIT (version in `kit/VERSION`), used by the
 demo page and as the token source. Per the kit's consuming rules it is copied
 **verbatim and never edited here** — to upgrade, delete the folder and unzip
